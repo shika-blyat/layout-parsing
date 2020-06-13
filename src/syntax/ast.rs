@@ -1,10 +1,10 @@
 // TODO Add modules
 pub use crate::source_pos::Spanned;
-use std::ops::Range;
 
 pub type BoxSpanned<T> = Spanned<Box<T>>;
 pub type Ident<'a> = &'a str;
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr<'a> {
     Literal(Spanned<Literal<'a>>),
@@ -23,6 +23,7 @@ pub enum Expr<'a> {
     },
 }
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement<'a> {
     Return(Expr<'a>),
@@ -31,6 +32,7 @@ pub enum Statement<'a> {
     StmtExpr(Expr<'a>),
 }
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum BinOp {
     Add,
@@ -44,6 +46,7 @@ pub enum BinOp {
     GT,
     GTE,
 }
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum UnOp {
     Pos,
@@ -51,6 +54,7 @@ pub enum UnOp {
     Not,
 }
 
+#[allow(unused)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Literal<'a> {
     Num(&'a str),

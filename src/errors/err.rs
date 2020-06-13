@@ -4,8 +4,9 @@ use crate::{
     source_pos::{Span, Spanned},
     syntax::tokens::Token,
 };
-
+#[allow(unused)]
 pub type SpannedErr<'a> = Spanned<Error<'a>>;
+
 #[derive(Debug)]
 pub struct ErrorInfo<'a> {
     pub expected: Option<Expected>,

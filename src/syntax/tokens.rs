@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, iter::Peekable, ops::Range};
+use std::convert::TryFrom;
 
 pub use crate::{
     errors::err::{Error, SpannedErr},
@@ -27,8 +27,6 @@ pub enum Token<'a> {
     Else,
 
     Equal,
-
-    Newline,
 
     Delimiter(Delimiter),
 

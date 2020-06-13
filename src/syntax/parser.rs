@@ -2,11 +2,12 @@
 // TODO function call parsing
 // TODO func decl and var decl parsing
 // TODO Write a small code formatter
+// TODO Write my own result type to propagate only some kind of error (or write a macro ?)
 
 use std::{iter::Peekable, ops::Range};
 
 use crate::{
-    errors::err::{Error, ErrorInfo, Expected, SpannedErr},
+    errors::err::{Error, ErrorInfo, Expected},
     syntax::{
         ast::*,
         tokens::{Delimiter, SpannedTok, Token},
@@ -37,6 +38,8 @@ where
     tokens: Peekable<I>,
     last_newline: usize,
 }
+
+#[allow(unused)]
 impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
@@ -48,10 +51,19 @@ where
         }
     }
 
-    fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        let start = self.if_()?.span.start;
+    fn if_then_else(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        let if_ = self.if_()?;
+        let start = if_.span.start;
+        if start <= enclosing_ctx {
+            return Err(ErrorInfo {
+                expected: Some(Expected::Named("a then token")),
+                error: Error::LayoutError("The then block is expected to be as indented as the if"),
+                span: if_.span,
+                found: None,
+            });
+        }
         let if_context = start - self.last_newline;
-        let condition = self.expr()?;
+        let condition = self.expr(if_context)?;
         let changed_line = match self.then().ok().or_else(|| self.indentation()) {
             Some(Spanned { span, elem }) => match elem {
                 Token::Indent(n, _) => {
@@ -73,7 +85,7 @@ where
             },
             None => return Err(self.unexpected_tok_or_eof(Some(Expected::Named("then block")))),
         };
-        let then_branch = self.expr()?;
+        let then_branch = self.expr(if_context)?;
         let mut end = then_branch.span.end;
         let else_branch = match self.else_() {
             Ok(Spanned {
@@ -90,7 +102,7 @@ where
                         found: None,
                     });
                 }
-                let expr = self.expr()?;
+                let expr = self.expr(if_context)?;
                 end = expr.span.end;
                 Some(expr)
             }
@@ -104,7 +116,7 @@ where
                         self.next();
                         // the following else token
                         self.next();
-                        let expr = self.expr()?;
+                        let expr = self.expr(if_context)?;
                         end = expr.span.end;
                         Some(expr)
                     }
@@ -114,6 +126,7 @@ where
             },
             _ => unreachable!(),
         };
+
         Ok(Spanned {
             elem: Expr::IfThenElse {
                 condition: condition.into(),
@@ -124,11 +137,19 @@ where
         })
     }
 
-    pub fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        self.block().or_else(|_| self.expr_())
+    pub fn expr(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        self.block(enclosing_ctx).or_else(|err| match err {
+            e
+            @
+            ErrorInfo {
+                error: Error::LayoutError(_),
+                ..
+            } => Err(e),
+            _ => self.expr_(enclosing_ctx),
+        })
     }
 
-    fn expr_(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    fn expr_(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         self.identifier()
             .or_else(|_| self.num())
             .or_else(|_| self.bool())
@@ -156,24 +177,51 @@ where
                 },
                 _ => unreachable!(),
             })
-            .or_else(|_| self.if_then_else())
-            .or_else(|_| Err(self.unexpected_tok_or_eof(Some(Expected::Named("an expression")))))
+            .or_else(|_| self.if_then_else(enclosing_ctx))
+            .or_else(|err| match err {
+                e
+                @
+                ErrorInfo {
+                    error: Error::LayoutError(_),
+                    ..
+                } => Err(e),
+                _ => Err(self.unexpected_tok_or_eof(Some(Expected::Named("an expression")))),
+            })
     }
 
-    pub fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn block(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let last_newline = self.last_newline;
-        let (start, fst_instruction) = match self.indentation() {
+        let (start, fst_instruction, span) = match self.indentation() {
             Some(Spanned {
-                elem: Token::Indent(n, e),
-                ..
-            }) => (n, self.statement()?),
-            _ => self.statement().map(|Spanned { elem, span }| {
-                (span.start - last_newline, Spanned { elem, span })
-            })?,
+                elem: Token::Indent(n, _),
+                span,
+            }) => (n, self.statement(enclosing_ctx)?, span),
+            _ => self
+                .statement(enclosing_ctx)
+                .map(|Spanned { elem, span }| {
+                    (
+                        span.start - last_newline,
+                        Spanned {
+                            elem,
+                            span: span.clone(),
+                        },
+                        span,
+                    )
+                })?,
         };
+        if start <= enclosing_ctx {
+            return Err(ErrorInfo {
+                expected: Some(Expected::Named("a statement")),
+                error: Error::LayoutError(
+                    "The block is not supposed to be more indented than the enclosing context",
+                ),
+                span,
+                found: None,
+            });
+        }
         let mut instructions = vec![fst_instruction];
-        while let Some(n) = self.is_as_much_indented_than(start) {
-            instructions.push(self.statement()?);
+        while let Some(_) = self.is_as_much_indented_than(start) {
+            instructions.push(self.statement(enclosing_ctx)?);
         }
         let span = last_newline
             ..instructions
@@ -186,11 +234,12 @@ where
         })
     }
 
-    fn statement(&mut self) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
-        self.expr_().map(|Spanned { span, elem }| Spanned {
-            span,
-            elem: Statement::StmtExpr(elem),
-        })
+    fn statement(&mut self, enclosing_ctx: usize) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
+        self.expr_(enclosing_ctx)
+            .map(|Spanned { span, elem }| Spanned {
+                span,
+                elem: Statement::StmtExpr(elem),
+            })
     }
 
     fn is_as_much_indented_than(&mut self, n2: usize) -> Option<usize> {
@@ -237,6 +286,7 @@ where
     );
     token!(lbrace, Token::Delimiter(Delimiter::LBrace), "left brace");
     token!(rbrace, Token::Delimiter(Delimiter::RBrace), "right brace");
+
     token!(if_, Token::If, "if token");
     token!(then, Token::Then, "then token");
     token!(else_, Token::Else, "else token");

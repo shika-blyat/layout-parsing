@@ -3,6 +3,7 @@ mod errors;
 mod source_pos;
 mod syntax;
 use syntax::{Lexer, Parser};
+
 fn main() {
     let _code1 = "
     foo = 2
@@ -18,12 +19,12 @@ fn main() {
   if True
   then False
   else
-    2
-    4";
+    5
+    ";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
     let mut parser = Parser::new(tokens.unwrap().into_iter());
     parser.skip_while_indent();
-    println!("{:#?}", parser.block());
+    println!("{:#?}", parser.block(0));
 }
