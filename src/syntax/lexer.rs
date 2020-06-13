@@ -1,7 +1,7 @@
 use std::{convert::TryFrom, iter::Peekable, str::CharIndices};
 
 use crate::{
-    errors::syntax_err::{SyntaxErr, SyntaxErrReason},
+    errors::err::*,
     syntax::tokens::{Spanned, SpannedTok, Token},
 };
 
@@ -32,7 +32,7 @@ impl<'a> Lexer<'a> {
             chars: source.char_indices().peekable(),
         }
     }
-    pub fn tokenize(mut self) -> Result<Vec<SpannedTok<'a>>, SyntaxErr> {
+    pub fn tokenize(mut self) -> Result<Vec<SpannedTok<'a>>, ErrorInfo<'a>> {
         let mut tokens = vec![];
         while let Some((pos, char)) = self.next() {
             match char {
@@ -86,28 +86,30 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 ' ' | '\t' | '\r' => (),
-                _ => {
-                    return Err(SyntaxErr {
+                c => {
+                    return Err(ErrorInfo {
                         span: pos..pos + 1,
-                        reason: SyntaxErrReason::UnexpectedChar(char),
+                        error: Error::UnexpectedChar(char),
                         expected: None,
+                        found: Some(Found::Char(c)),
                     })
                 }
             }
         }
         Ok(tokens)
     }
-    pub fn string(&mut self, start: usize) -> Result<SpannedTok<'a>, SyntaxErr> {
+    pub fn string(&mut self, start: usize) -> Result<SpannedTok<'a>, ErrorInfo<'a>> {
         let mut length = 0;
         loop {
             match self.next() {
                 Some((_, '"')) => break,
                 Some(_) => length += 1,
                 None => {
-                    return Err(SyntaxErr {
+                    return Err(ErrorInfo {
                         span: start..start + length,
-                        reason: SyntaxErrReason::UnclosedStringLiteral,
-                        expected: None,
+                        error: Error::UnclosedStringLiteral,
+                        expected: Some(Expected::Named("an enclosing quote")),
+                        found: Some(Found::Named("an EOF")),
                     })
                 }
             }

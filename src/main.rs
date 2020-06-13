@@ -17,15 +17,15 @@ fn main() {
     ";
     let code2 = "
     if True
-    then 
-      2
+    then 2
+    else 
       4
-    else if True then 3 else 3
-         4";
+      foo
+    foo";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
     let mut parser = Parser::new(tokens.unwrap().into_iter());
     parser.skip_while_indent();
-    println!("{:#?}", parser.if_then_else());
+    println!("{:#?}", parser.block());
 }

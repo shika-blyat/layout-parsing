@@ -1,13 +1,13 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, iter::Peekable, ops::Range};
 
 pub use crate::{
-    errors::syntax_err::{SyntaxErr, SyntaxErrReason},
+    errors::err::{Error, SpannedErr},
     source_pos::Spanned,
 };
 
 pub type SpannedTok<'a> = Spanned<Token<'a>>;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Token<'a> {
     Op(&'a str),
 
@@ -53,7 +53,7 @@ impl<'a> TryFrom<&'a str> for Token<'a> {
         })
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Delimiter {
     LParen,
     RParen,

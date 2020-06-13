@@ -1,17 +1,26 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, ops::Range};
 
-use super::{
-    ast::*,
-    tokens::{Delimiter, SpannedTok, Token},
+use crate::{
+    errors::err::{Error, ErrorInfo, Expected, SpannedErr},
+    syntax::{
+        ast::*,
+        tokens::{Delimiter, SpannedTok, Token},
+    },
 };
 
 macro_rules! token {
-    ($name: ident, $p: pat) => {
-        pub fn $name(&mut self) -> Option<SpannedTok<'a>> {
+    ($name: ident, $p: pat, $expected: literal) => {
+        pub fn $name(&mut self) -> Result<SpannedTok<'a>, ErrorInfo<'a>> {
             if let Some(Spanned { elem: $p, .. }) = self.peek() {
-                return self.next();
+                return Ok(self.next().unwrap());
             }
-            None
+            let (span, error) = self.next_or_eof();
+            Err(ErrorInfo {
+                expected: Some(Expected::Named($expected)),
+                found: None,
+                span,
+                error,
+            })
         }
     };
 }
@@ -21,7 +30,7 @@ where
     I: Iterator<Item = SpannedTok<'a>>,
 {
     tokens: Peekable<I>,
-    context_stack: Vec<usize>,
+    last_indent_peeked: Option<SpannedTok<'a>>,
     last_newline: usize,
 }
 impl<'a, I> Parser<'a, I>
@@ -31,7 +40,7 @@ where
     pub fn new(tokens: I) -> Self {
         Self {
             tokens: tokens.peekable(),
-            context_stack: vec![],
+            last_indent_peeked: None,
             last_newline: 0,
         }
     }
@@ -42,54 +51,69 @@ where
         }) = self.indentation()
         {}
     }
-    pub fn if_then_else(&mut self) -> Option<Spanned<Expr<'a>>> {
+    pub fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let start = self.if_()?.span.start;
         let if_context = start - self.last_newline;
-        let condition = self.expr(None).expect("Expected a condition");
-        let changed_line = match self.then().or_else(|| self.indentation()) {
+        let condition = self.expr()?;
+        let changed_line = match self.then().ok().or_else(|| self.indentation()) {
             Some(Spanned { span, elem }) => match elem {
                 Token::Indent(n) => {
                     if if_context != n {
-                        panic!("the then block is expected to be as indented as much as the if")
+                        return Err(ErrorInfo {
+                            expected: Some(Expected::Named("a then token")),
+                            error: Error::LayoutError(
+                                "The then block is expected to be as indented as the if",
+                            ),
+                            span,
+                            found: None,
+                        });
                     }
-                    self.then().expect("expected a then block");
+                    self.then()?;
                     true
                 }
                 Token::Then => false,
                 _ => unreachable!(),
             },
-            None => panic!("Expected a then block after an if"),
+            None => return Err(self.unexpected_tok_or_eof(Some(Expected::Named("then block")))),
         };
-        let then_branch = self
-            .expr(None)
-            .expect("Expected an expression after the then block");
-        let else_branch = match self.else_().or_else(|| self.indentation()) {
-            Some(Spanned { span, elem }) => match elem {
-                Token::Indent(n) => {
-                    println!("{} {} {:#?}", if_context, n, then_branch);
-                    if if_context != n {
-                        panic!("the else block is expected to be as indented as much as the if")
-                    }
-                    self.else_().expect("expected a then block");
-                    Some(
-                        self.expr(None)
-                            .expect("Expected an expression after the else block"),
-                    )
+        let then_branch = self.expr()?;
+        let else_branch = match self.else_() {
+            Ok(Spanned {
+                span,
+                elem: Token::Else,
+            }) => {
+                if changed_line && span.start != if_context {
+                    return Err(ErrorInfo {
+                        expected: None,
+                        span,
+                        error: Error::LayoutError(
+                            "the then block is expected to be as indented as the opening if",
+                        ),
+                        found: None,
+                    });
                 }
-                Token::Else => {
-                    if changed_line && span.start != if_context {
-                        panic!("the then block is expected to be as indented as the if")
+                Some(self.expr()?)
+            }
+            Err(_) => match self.peek_indent() {
+                Some(SpannedTok {
+                    elem: Token::Indent(n),
+                    ..
+                }) if *n == if_context => match self.peek() {
+                    Some(Spanned {
+                        elem: Token::Else,
+                        span,
+                    }) => {
+                        self.next();
+                        self.next();
+                        Some(self.expr()?)
                     }
-                    Some(
-                        self.expr(None)
-                            .expect("Expected an expression after the else block"),
-                    )
-                }
-                _ => unreachable!(),
+                    _ => None,
+                },
+                _ => None,
             },
-            None => None,
+            _ => unreachable!(),
         };
-        Some(Spanned {
+        Ok(Spanned {
             elem: Expr::IfThenElse {
                 condition: condition.into(),
                 then_branch: then_branch.into(),
@@ -98,13 +122,13 @@ where
             span: start..0,
         })
     }
-    fn expr(&mut self, start: Option<usize>) -> Option<Spanned<Expr<'a>>> {
-        self.block(start).or_else(|| self.expr_())
+    fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        self.block().or_else(|_| self.expr_())
     }
-    fn expr_(&mut self) -> Option<Spanned<Expr<'a>>> {
+    fn expr_(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         self.identifier()
-            .or_else(|| self.num())
-            .or_else(|| self.bool())
+            .or_else(|_| self.num())
+            .or_else(|_| self.bool())
             .map(|Spanned { span, elem }| match elem {
                 Token::Ident(i) => Spanned {
                     elem: Expr::Ident(Spanned {
@@ -129,53 +153,56 @@ where
                 },
                 _ => unreachable!(),
             })
-            .or_else(|| self.if_then_else())
+            .or_else(|_| self.if_then_else())
+            .or_else(|_| Err(self.unexpected_tok_or_eof(Some(Expected::Named("an expression")))))
     }
-    fn block(&mut self, mut start: Option<usize>) -> Option<Spanned<Expr<'a>>> {
-        let mut instructions = match self.indentation() {
+    pub fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        let last_newline = self.last_newline;
+        let (start, fst_instruction) = match self.indentation() {
             Some(Spanned {
                 elem: Token::Indent(n),
                 ..
-            }) => {
-                start = Some(n);
-                vec![self.statement().expect("Expected a statement")]
-            }
-            _ => match self.statement() {
-                Some(Spanned { elem, span }) => {
-                    if start.is_none() {
-                        println!("{:#?}", elem);
-                        println!("{} {}", span.start, self.last_newline);
-                        start = Some(span.start - self.last_newline);
-                    }
-
-                    vec![Spanned {
-                        elem,
-                        span: span.clone(),
-                    }]
-                }
-                None => panic!("expected an expression"),
-            },
+            }) => (n, self.statement()?),
+            _ => self.statement().map(|Spanned { elem, span }| {
+                (span.start - last_newline, Spanned { elem, span })
+            })?,
         };
-        let start = start.unwrap();
+        let mut instructions = vec![fst_instruction];
         while let Some(n) = self.indent_lvl(|&n| n >= start) {
-            if n > start {
+            /* if n != start {
                 todo!("need to handle this")
-            }
-            instructions.push(self.statement().expect("expected a statement"))
+            }*/
+            instructions.push(self.statement()?);
         }
         let span = 0..0;
-        Some(Spanned {
+        Ok(Spanned {
             elem: Expr::Block { instructions },
             span: start..0,
         })
     }
-    pub fn statement(&mut self) -> Option<Spanned<Statement<'a>>> {
+    fn statement(&mut self) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
         self.expr_().map(|Spanned { span, elem }| Spanned {
             span,
             elem: Statement::StmtExpr(elem),
         })
     }
-    pub fn indent_lvl(&mut self, predicate: impl Fn(&usize) -> bool) -> Option<usize> {
+    fn peek_indent<'b>(&'b mut self) -> &'b Option<SpannedTok<'a>> {
+        if self.last_indent_peeked.is_some() {
+            panic!("I did some shit")
+        }
+        self.last_indent_peeked = self.next();
+        &self.last_indent_peeked
+    }
+    fn indent_lvl(&mut self, predicate: impl Fn(&usize) -> bool) -> Option<usize> {
+        if self.last_indent_peeked.is_some() {
+            return self
+                .last_indent_peeked
+                .take()
+                .map(|Spanned { elem, .. }| match elem {
+                    Token::Indent(n) => n,
+                    _ => unreachable!(),
+                });
+        }
         if let Some(Spanned {
             elem: Token::Indent(n),
             ..
@@ -194,7 +221,10 @@ where
         }
         None
     }
-    pub fn indentation(&mut self) -> Option<SpannedTok<'a>> {
+    fn indentation(&mut self) -> Option<SpannedTok<'a>> {
+        if self.last_indent_peeked.is_some() {
+            return self.last_indent_peeked.take();
+        }
         if let Some(Spanned {
             elem: Token::Indent(n),
             span,
@@ -205,18 +235,48 @@ where
         }
         None
     }
-    token!(lparen, Token::Delimiter(Delimiter::LParen));
-    token!(rparen, Token::Delimiter(Delimiter::RParen));
-    token!(lbrace, Token::Delimiter(Delimiter::LBrace));
-    token!(rbrace, Token::Delimiter(Delimiter::RBrace));
-    token!(if_, Token::If);
-    token!(then, Token::Then);
-    token!(else_, Token::Else);
-    token!(num, Token::Num(_));
-    token!(identifier, Token::Ident(_));
-    token!(bool, Token::Bool(_));
+    token!(
+        lparen,
+        Token::Delimiter(Delimiter::LParen),
+        "left parenthesis"
+    );
+    token!(
+        rparen,
+        Token::Delimiter(Delimiter::RParen),
+        "right parenthesis"
+    );
+    token!(lbrace, Token::Delimiter(Delimiter::LBrace), "left brace");
+    token!(rbrace, Token::Delimiter(Delimiter::RBrace), "right brace");
+    token!(if_, Token::If, "if token");
+    token!(then, Token::Then, "then token");
+    token!(else_, Token::Else, "else token");
+    token!(num, Token::Num(_), "number");
+    token!(identifier, Token::Ident(_), "identifier");
+    token!(bool, Token::Bool(_), "boolean");
+    fn next_or_eof(&mut self) -> (Range<usize>, Error<'a>) {
+        match self.peek() {
+            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(*elem)),
+            _ => (std::usize::MAX..std::usize::MAX, Error::UnexpectedEOF),
+        }
+    }
+    fn unexpected_tok_or_eof(&mut self, expected: Option<Expected>) -> ErrorInfo<'a> {
+        let (span, error) = match self.peek() {
+            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(*elem)),
+            _ => (std::usize::MAX..std::usize::MAX, Error::UnexpectedEOF),
+        };
+        ErrorInfo {
+            span,
+            error,
+            expected,
+            found: None,
+        }
+    }
     fn next(&mut self) -> Option<SpannedTok<'a>> {
-        self.tokens.next()
+        if self.last_indent_peeked.is_none() {
+            self.tokens.next()
+        } else {
+            self.last_indent_peeked.take()
+        }
     }
     fn peek(&mut self) -> Option<&SpannedTok<'a>> {
         self.tokens.peek()
