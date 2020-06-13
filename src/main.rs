@@ -2,10 +2,9 @@
 mod errors;
 mod source_pos;
 mod syntax;
-use std::slice::Iter;
-use syntax::{Lexer, Parser, Spanned, Token};
+use syntax::{Lexer, Parser};
 fn main() {
-    let code1 = "
+    let _code1 = "
     foo = 2
           if True
           then 4
@@ -20,7 +19,7 @@ fn main() {
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
-    let mut parser = Parser::new(tokens.unwrap().into_iter());
+    let _parser = Parser::new(tokens.unwrap().into_iter());
     //parser.skip_while_indent();
     // println!("{:#?}", parser.block());
 }
