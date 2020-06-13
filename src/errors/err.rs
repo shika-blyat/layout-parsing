@@ -1,3 +1,5 @@
+// TODO Integrate codespan for errors pretty printing, and write the necessary Display implementations
+
 use crate::{
     source_pos::{Span, Spanned},
     syntax::tokens::Token,

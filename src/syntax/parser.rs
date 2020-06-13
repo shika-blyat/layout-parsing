@@ -1,3 +1,8 @@
+// TODO operations parsing
+// TODO function call parsing
+// TODO func decl and var decl parsing
+// TODO Write a small code formatter
+
 use std::{iter::Peekable, ops::Range};
 
 use crate::{
@@ -44,7 +49,7 @@ where
             last_newline: 0,
         }
     }
-    pub fn skip_while_indent(&mut self) {
+    fn skip_while_indent(&mut self) {
         while let Some(Spanned {
             elem: Token::Ident(_),
             ..
@@ -156,7 +161,7 @@ where
             .or_else(|_| self.if_then_else())
             .or_else(|_| Err(self.unexpected_tok_or_eof(Some(Expected::Named("an expression")))))
     }
-    pub fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let last_newline = self.last_newline;
         let (start, fst_instruction) = match self.indentation() {
             Some(Spanned {
@@ -164,14 +169,16 @@ where
                 ..
             }) => (n, self.statement()?),
             _ => self.statement().map(|Spanned { elem, span }| {
+                println!("a: {:#?} {:#?}", span, elem);
                 (span.start - last_newline, Spanned { elem, span })
             })?,
         };
         let mut instructions = vec![fst_instruction];
-        while let Some(n) = self.indent_lvl(|&n| n >= start) {
-            /* if n != start {
-                todo!("need to handle this")
-            }*/
+        while let Some(n) = self.is_more_or_equally_indented_than(start) {
+            // FIXME: allow blocks like this:
+            // if True
+            // then 2
+            //      4
             instructions.push(self.statement()?);
         }
         let span = 0..0;
@@ -186,29 +193,35 @@ where
             elem: Statement::StmtExpr(elem),
         })
     }
+    // FIXME This method only exists because there's some cases where i need to be able to peek an indent token and the following token too
+    // There's probably a cleaner workaround than that, but for the moment, i don't know any, and it work as it is.
     fn peek_indent<'b>(&'b mut self) -> &'b Option<SpannedTok<'a>> {
         if self.last_indent_peeked.is_some() {
-            panic!("I did some shit")
+            panic!("Internal error occured, oopsie")
         }
         self.last_indent_peeked = self.next();
         &self.last_indent_peeked
     }
-    fn indent_lvl(&mut self, predicate: impl Fn(&usize) -> bool) -> Option<usize> {
-        if self.last_indent_peeked.is_some() {
-            return self
-                .last_indent_peeked
-                .take()
-                .map(|Spanned { elem, .. }| match elem {
-                    Token::Indent(n) => n,
-                    _ => unreachable!(),
-                });
-        }
+    fn is_more_or_equally_indented_than(&mut self, n2: usize) -> Option<usize> {
         if let Some(Spanned {
+            elem: Token::Indent(n),
+            ..
+        }) = self.last_indent_peeked
+        {
+            if n >= n2 {
+                self.last_indent_peeked
+                    .take()
+                    .map(|Spanned { elem, .. }| match elem {
+                        Token::Indent(n) => n - self.last_newline,
+                        _ => unreachable!(),
+                    });
+            }
+        } else if let Some(Spanned {
             elem: Token::Indent(n),
             ..
         }) = self.peek()
         {
-            if predicate(n) {
+            if *n == n2 {
                 if let Some(Spanned {
                     elem: Token::Indent(n),
                     span,

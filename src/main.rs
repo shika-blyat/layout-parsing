@@ -16,16 +16,11 @@ fn main() {
     a = 2
     ";
     let code2 = "
-    if True
-    then 2
-    else 
-      4
-      foo
-    foo";
+    if True then False else True";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
     let mut parser = Parser::new(tokens.unwrap().into_iter());
-    parser.skip_while_indent();
-    println!("{:#?}", parser.block());
+    //parser.skip_while_indent();
+    // println!("{:#?}", parser.block());
 }

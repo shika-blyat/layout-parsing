@@ -11,7 +11,7 @@ pub type SpannedTok<'a> = Spanned<Token<'a>>;
 pub enum Token<'a> {
     Op(&'a str),
 
-    // I don't want to handle literal overflow and everything during parsing, that'd be ugly imo, so i'll just store them as strings
+    // I don't want to handle literal overflow and everything during parsing, that'd be ugly imo, so i just store them as strings
     Num(&'a str),
 
     Str(&'a str),
