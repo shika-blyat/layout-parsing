@@ -7,11 +7,11 @@ pub use crate::{
 
 pub type SpannedTok<'a> = Spanned<Token<'a>>;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Token<'a> {
     Op(&'a str),
 
-    // I don't want to handle literal overflow and everything during parsing, that'd be ugly imo, so i just store them as strings
+    // I don't want to handle literal overflow and everything during parsing, that'd be ugly imo, so I just store them as strings
     Num(&'a str),
 
     Str(&'a str),
@@ -32,7 +32,9 @@ pub enum Token<'a> {
 
     Delimiter(Delimiter),
 
-    Indent(usize),
+    Indent(usize, Box<Spanned<Token<'a>>>),
+
+    EOF,
 }
 
 impl<'a> TryFrom<&'a str> for Token<'a> {

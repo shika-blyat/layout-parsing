@@ -35,7 +35,6 @@ where
     I: Iterator<Item = SpannedTok<'a>>,
 {
     tokens: Peekable<I>,
-    last_indent_peeked: Option<SpannedTok<'a>>,
     last_newline: usize,
 }
 impl<'a, I> Parser<'a, I>
@@ -45,24 +44,23 @@ where
     pub fn new(tokens: I) -> Self {
         Self {
             tokens: tokens.peekable(),
-            last_indent_peeked: None,
             last_newline: 0,
         }
     }
-    fn skip_while_indent(&mut self) {
+    pub fn skip_while_indent(&mut self) {
         while let Some(Spanned {
-            elem: Token::Ident(_),
+            elem: Token::Indent(_, _),
             ..
         }) = self.indentation()
         {}
     }
-    pub fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let start = self.if_()?.span.start;
         let if_context = start - self.last_newline;
         let condition = self.expr()?;
         let changed_line = match self.then().ok().or_else(|| self.indentation()) {
             Some(Spanned { span, elem }) => match elem {
-                Token::Indent(n) => {
+                Token::Indent(n, _) => {
                     if if_context != n {
                         return Err(ErrorInfo {
                             expected: Some(Expected::Named("a then token")),
@@ -99,15 +97,12 @@ where
                 }
                 Some(self.expr()?)
             }
-            Err(_) => match self.peek_indent() {
+            Err(_) => match self.peek() {
                 Some(SpannedTok {
-                    elem: Token::Indent(n),
+                    elem: Token::Indent(n, tok),
                     ..
-                }) if *n == if_context => match self.peek() {
-                    Some(Spanned {
-                        elem: Token::Else,
-                        span,
-                    }) => {
+                }) if *n == if_context => match tok.elem {
+                    Token::Else => {
                         self.next();
                         self.next();
                         Some(self.expr()?)
@@ -127,7 +122,7 @@ where
             span: start..0,
         })
     }
-    fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         self.block().or_else(|_| self.expr_())
     }
     fn expr_(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
@@ -161,20 +156,22 @@ where
             .or_else(|_| self.if_then_else())
             .or_else(|_| Err(self.unexpected_tok_or_eof(Some(Expected::Named("an expression")))))
     }
-    fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn block(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let last_newline = self.last_newline;
         let (start, fst_instruction) = match self.indentation() {
             Some(Spanned {
-                elem: Token::Indent(n),
+                elem: Token::Indent(n, e),
                 ..
-            }) => (n, self.statement()?),
+            }) => {
+                println!("{:#?}", e);
+                (n, self.statement()?)
+            }
             _ => self.statement().map(|Spanned { elem, span }| {
-                println!("a: {:#?} {:#?}", span, elem);
                 (span.start - last_newline, Spanned { elem, span })
             })?,
         };
         let mut instructions = vec![fst_instruction];
-        while let Some(n) = self.is_more_or_equally_indented_than(start) {
+        while let Some(n) = self.is_as_much_indented_than(start) {
             // FIXME: allow blocks like this:
             // if True
             // then 2
@@ -193,37 +190,15 @@ where
             elem: Statement::StmtExpr(elem),
         })
     }
-    // FIXME This method only exists because there's some cases where i need to be able to peek an indent token and the following token too
-    // There's probably a cleaner workaround than that, but for the moment, i don't know any, and it work as it is.
-    fn peek_indent<'b>(&'b mut self) -> &'b Option<SpannedTok<'a>> {
-        if self.last_indent_peeked.is_some() {
-            panic!("Internal error occured, oopsie")
-        }
-        self.last_indent_peeked = self.next();
-        &self.last_indent_peeked
-    }
-    fn is_more_or_equally_indented_than(&mut self, n2: usize) -> Option<usize> {
+    fn is_as_much_indented_than(&mut self, n2: usize) -> Option<usize> {
         if let Some(Spanned {
-            elem: Token::Indent(n),
-            ..
-        }) = self.last_indent_peeked
-        {
-            if n >= n2 {
-                self.last_indent_peeked
-                    .take()
-                    .map(|Spanned { elem, .. }| match elem {
-                        Token::Indent(n) => n - self.last_newline,
-                        _ => unreachable!(),
-                    });
-            }
-        } else if let Some(Spanned {
-            elem: Token::Indent(n),
+            elem: Token::Indent(n, _),
             ..
         }) = self.peek()
         {
             if *n == n2 {
                 if let Some(Spanned {
-                    elem: Token::Indent(n),
+                    elem: Token::Indent(n, _),
                     span,
                 }) = self.next()
                 {
@@ -235,11 +210,8 @@ where
         None
     }
     fn indentation(&mut self) -> Option<SpannedTok<'a>> {
-        if self.last_indent_peeked.is_some() {
-            return self.last_indent_peeked.take();
-        }
         if let Some(Spanned {
-            elem: Token::Indent(n),
+            elem: Token::Indent(_, _),
             span,
         }) = self.peek()
         {
@@ -268,13 +240,13 @@ where
     token!(bool, Token::Bool(_), "boolean");
     fn next_or_eof(&mut self) -> (Range<usize>, Error<'a>) {
         match self.peek() {
-            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(*elem)),
+            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(elem.clone())),
             _ => (std::usize::MAX..std::usize::MAX, Error::UnexpectedEOF),
         }
     }
     fn unexpected_tok_or_eof(&mut self, expected: Option<Expected>) -> ErrorInfo<'a> {
         let (span, error) = match self.peek() {
-            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(*elem)),
+            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(elem.clone())),
             _ => (std::usize::MAX..std::usize::MAX, Error::UnexpectedEOF),
         };
         ErrorInfo {
@@ -285,11 +257,7 @@ where
         }
     }
     fn next(&mut self) -> Option<SpannedTok<'a>> {
-        if self.last_indent_peeked.is_none() {
-            self.tokens.next()
-        } else {
-            self.last_indent_peeked.take()
-        }
+        self.tokens.next()
     }
     fn peek(&mut self) -> Option<&SpannedTok<'a>> {
         self.tokens.peek()

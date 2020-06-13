@@ -34,6 +34,7 @@ impl<'a> Lexer<'a> {
     }
     pub fn tokenize(mut self) -> Result<Vec<SpannedTok<'a>>, ErrorInfo<'a>> {
         let mut tokens = vec![];
+        let mut last_indent = None;
         while let Some((pos, char)) = self.next() {
             match char {
                 c if c.is_ascii_digit() => tokens.push(self.num(pos)),
@@ -79,11 +80,9 @@ impl<'a> Lexer<'a> {
                         if *c == '\n' {
                             continue;
                         }
-                        tokens.push(SpannedTok {
-                            elem: Token::Indent(counter),
-                            span: pos - counter..*pos,
-                        })
+                        last_indent = Some((counter, pos - counter..*pos));
                     }
+                    continue;
                 }
                 ' ' | '\t' | '\r' => (),
                 c => {
@@ -95,7 +94,21 @@ impl<'a> Lexer<'a> {
                     })
                 }
             }
+            if let Some((size, ref span)) = last_indent {
+                let last_tok = tokens.pop().unwrap();
+                tokens.push(SpannedTok {
+                    elem: Token::Indent(size, Box::new(last_tok.clone())),
+                    span: span.clone(),
+                });
+                tokens.push(last_tok);
+                last_indent = None;
+            }
         }
+        tokens.push(SpannedTok {
+            span: std::usize::MAX..std::usize::MAX, //codespan will take care of this, and even if the range goes out of the string, it will just display the range we're targeting
+            //as the final element of the string
+            elem: Token::EOF,
+        });
         Ok(tokens)
     }
     pub fn string(&mut self, start: usize) -> Result<SpannedTok<'a>, ErrorInfo<'a>> {
