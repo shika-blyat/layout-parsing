@@ -15,11 +15,11 @@ fn main() {
     a = 2
     ";
     let code2 = "
-    if True 
-    then False
-    else 
-      2
-      4";
+  if True
+  then False
+  else
+    2
+    4";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
