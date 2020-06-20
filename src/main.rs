@@ -1,4 +1,5 @@
-//#[feature(or_patterns)]
+// #![feature(or_patterns)]
+#![feature(box_patterns)]
 mod errors;
 mod source_pos;
 mod syntax;
@@ -16,15 +17,14 @@ fn main() {
     a = 2
     ";
     let code2 = "
-  if True
-  then False
-  else
-    5
-    ";
+    2
+    4
+    8
+    2
+";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();
     println!("{:#?}", tokens);
     let mut parser = Parser::new(tokens.unwrap().into_iter());
-    parser.skip_while_indent();
     println!("{:#?}", parser.block(0));
 }

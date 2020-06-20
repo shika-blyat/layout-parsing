@@ -71,6 +71,9 @@ impl<'a> Lexer<'a> {
                     }),
                 },
                 '\n' => {
+                    if tokens.is_empty() {
+                        continue;
+                    }
                     let mut counter = 1;
                     while let Some((_, ' ')) = self.peek() {
                         self.next();
