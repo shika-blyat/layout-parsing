@@ -1,7 +1,6 @@
 // #![feature(or_patterns)]
 #![feature(box_patterns)]
 mod errors;
-mod source_pos;
 mod syntax;
 use syntax::{Lexer, Parser};
 
@@ -17,10 +16,12 @@ fn main() {
     a = 2
     ";
     let code2 = "
-    2
-    4
-    8
-    2
+    if True
+    then 4
+         2
+    else if True then 2 
+         else 4
+    15
 ";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();

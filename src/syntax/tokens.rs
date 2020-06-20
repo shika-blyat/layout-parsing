@@ -1,13 +1,19 @@
 use std::convert::TryFrom;
 
-pub use crate::{
-    errors::err::{Error, SpannedErr},
-    source_pos::Spanned,
-};
+pub use crate::errors::err::{Error, SpannedErr};
+use std::ops::Range;
+
+pub type Span = Range<usize>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Spanned<T> {
+    pub elem: T,
+    pub span: Span,
+}
 
 pub type SpannedTok<'a> = Spanned<Token<'a>>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Op(&'a str),
 
@@ -53,7 +59,7 @@ impl<'a> TryFrom<&'a str> for Token<'a> {
         })
     }
 }
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, PartialEq, Clone)]
 pub enum Delimiter {
     LParen,
     RParen,
