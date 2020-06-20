@@ -48,7 +48,7 @@ where
         enclosing_ctx: usize,
     ) -> Result<ExprSpan<Expr<'a>>, ErrorInfo<'a>> {
         let if_ctx = self.if_()?.span.start - self.last_newline;
-        let condition = self.block(enclosing_ctx)?;
+        let condition = self.block(if_ctx)?;
         match self.then() {
             Ok(_) => (),
             Err(_) => match self.indentation() {
@@ -64,12 +64,20 @@ where
                 }) if n == if_ctx => {
                     self.next();
                 }
-                _ => todo!("error"),
+                _ => {
+                    let (span, error) = self.next_or_eof();
+                    return Err(ErrorInfo {
+                        error,
+                        span,
+                        found: None,
+                        expected: Some(Expected::Named("An then block")),
+                    });
+                }
             },
         };
-        let then_arm = self.block(enclosing_ctx)?;
+        let then_arm = self.block(if_ctx)?;
         let else_arm = match self.else_() {
-            Ok(_) => Some(self.block(enclosing_ctx)?),
+            Ok(_) => Some(self.block(if_ctx)?),
             _ => match self.indentation() {
                 Some(Spanned {
                     span,
@@ -83,7 +91,7 @@ where
                 }) if n == if_ctx => {
                     self.indentation();
                     self.next();
-                    Some(self.block(enclosing_ctx)?)
+                    Some(self.block(if_ctx)?)
                 }
                 _ => None,
             },
@@ -107,12 +115,22 @@ where
             .statement(enclosing_ctx)
             .map(|v| (v.span.start, v.column, v))
             .or_else(|_| {
-                if let Some(SpannedTok { span, .. }) = self.indentation() {
-                    if span.end > enclosing_ctx {
-                        return Ok((span.end, span.end, self.statement(enclosing_ctx)?));
+                if let Some(SpannedTok {
+                    elem: Token::Indent(n, _),
+                    ..
+                }) = self.indentation()
+                {
+                    if n > enclosing_ctx {
+                        return Ok((n, n, self.statement(enclosing_ctx)?));
                     }
                 }
-                todo!();
+                let (span, error) = self.next_or_eof();
+                return Err(ErrorInfo {
+                    error,
+                    span,
+                    found: None,
+                    expected: Some(Expected::Named("An expression")),
+                });
             })?;
         let mut instructions = vec![first_statement];
         loop {
