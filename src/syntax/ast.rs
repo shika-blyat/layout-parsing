@@ -24,7 +24,7 @@ impl<T> From<ExprSpan<T>> for ExprSpan<Box<T>> {
 #[allow(unused)]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expr<'a> {
-    Literal(ExprSpan<Literal<'a>>),
+    Literal(Literal<'a>),
     Ident(ExprSpan<Ident<'a>>),
     Unary(UnOp, BoxSpanned<Expr<'a>>),
     Binary(BinOp, BoxSpanned<Expr<'a>>, BoxSpanned<Expr<'a>>),

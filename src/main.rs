@@ -16,12 +16,7 @@ fn main() {
     a = 2
     ";
     let code2 = "
-    if True
-    then 4
-         2
-    else if True then 2 
-         else 4
-    15
+    if True then 2 else if True then 3 else 4
 ";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();

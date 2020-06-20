@@ -149,20 +149,12 @@ where
                     span,
                 },
                 Token::Num(n) => ExprSpan {
-                    elem: Expr::Literal(ExprSpan {
-                        span: span.clone(),
-                        column: span.start - self.last_newline,
-                        elem: Literal::Num(n),
-                    }),
+                    elem: Expr::Literal(Literal::Num(n)),
                     column: span.start - self.last_newline,
                     span,
                 },
                 Token::Bool(b) => ExprSpan {
-                    elem: Expr::Literal(ExprSpan {
-                        span: span.clone(),
-                        column: span.start - self.last_newline,
-                        elem: Literal::Bool(b),
-                    }),
+                    elem: Expr::Literal(Literal::Bool(b)),
                     column: span.start - self.last_newline,
                     span,
                 },
@@ -232,12 +224,102 @@ where
     }
 }
 
+#[allow(unused)]
 mod test {
-    use crate::syntax::{ast::Expr::*, *};
-    use pretty_assertions::{assert_eq, assert_ne};
+    use crate::syntax::*;
+    use pretty_assertions::assert_eq;
     #[test]
     fn inline_if() {
-        let code2 = "
+        let code = "
+    if True then 2 else if True then 3
+    ";
+        let lexer = Lexer::new(code);
+        let mut parser = Parser::new(lexer.tokenize().unwrap().into_iter());
+        let result = parser.block(0).unwrap();
+        assert_eq!(
+            result,
+            ExprSpan {
+                span: 5..39,
+                column: 5,
+                elem: Expr::Block {
+                    instructions: vec![ExprSpan {
+                        span: 5..39,
+                        column: 5,
+                        elem: Statement::StmtExpr(Expr::IfThenElse {
+                            condition: ExprSpan {
+                                span: 8..12,
+                                column: 8,
+                                elem: Box::new(Expr::Block {
+                                    instructions: vec![ExprSpan {
+                                        span: 8..12,
+                                        column: 8,
+                                        elem: Statement::StmtExpr(Expr::Literal(
+                                            ast::Literal::Bool(true)
+                                        ))
+                                    }]
+                                })
+                            },
+                            then_arm: ExprSpan {
+                                span: 18..19,
+                                column: 18,
+                                elem: Box::new(Expr::Block {
+                                    instructions: vec![ExprSpan {
+                                        span: 18..19,
+                                        column: 18,
+                                        elem: Statement::StmtExpr(Expr::Literal(
+                                            ast::Literal::Num("2")
+                                        ))
+                                    }]
+                                })
+                            },
+                            else_arm: Some(ExprSpan {
+                                span: 25..39,
+                                column: 25,
+                                elem: Box::new(Expr::Block {
+                                    instructions: vec![ExprSpan {
+                                        span: 25..39,
+                                        column: 25,
+                                        elem: Statement::StmtExpr(Expr::IfThenElse {
+                                            condition: ExprSpan {
+                                                span: 28..32,
+                                                column: 28,
+                                                elem: Box::new(Expr::Block {
+                                                    instructions: vec![ExprSpan {
+                                                        span: 28..32,
+                                                        column: 28,
+                                                        elem: Statement::StmtExpr(Expr::Literal(
+                                                            ast::Literal::Bool(true)
+                                                        ))
+                                                    }]
+                                                })
+                                            },
+                                            then_arm: ExprSpan {
+                                                span: 38..39,
+                                                column: 38,
+                                                elem: Box::new(Expr::Block {
+                                                    instructions: vec![ExprSpan {
+                                                        span: 38..39,
+                                                        column: 38,
+                                                        elem: Statement::StmtExpr(Expr::Literal(
+                                                            ast::Literal::Num("3",),
+                                                        ),),
+                                                    },],
+                                                }),
+                                            },
+                                            else_arm: None
+                                        })
+                                    }]
+                                })
+                            }),
+                        })
+                    }]
+                }
+            }
+        );
+    }
+    #[test]
+    fn nested_if() {
+        let code = "
     if True
     then 4
          2
@@ -245,15 +327,15 @@ mod test {
          else 4
     15
 ";
-        let lexer = Lexer::new(code2);
+        let lexer = Lexer::new(code);
         let mut parser = Parser::new(lexer.tokenize().unwrap().into_iter());
-        let result = parser.block(0);
+        let result = parser.block(0).unwrap();
         assert_eq!(
             result,
-            Ok(ExprSpan {
+            ExprSpan {
                 span: 5..82,
                 column: 5,
-                elem: Block {
+                elem: Expr::Block {
                     instructions: vec![
                         ExprSpan {
                             span: 5..75,
@@ -262,16 +344,14 @@ mod test {
                                 condition: ExprSpan {
                                     span: 8..12,
                                     column: 8,
-                                    elem: Box::new(Block {
+                                    elem: Box::new(Expr::Block {
                                         instructions: vec![{
                                             ExprSpan {
                                                 span: 8..12,
                                                 column: 8,
-                                                elem: Statement::StmtExpr(Literal(ExprSpan {
-                                                    span: 8..12,
-                                                    column: 8,
-                                                    elem: ast::Literal::Bool(true),
-                                                })),
+                                                elem: Statement::StmtExpr(Expr::Literal(
+                                                    ast::Literal::Bool(true),
+                                                )),
                                             }
                                         }]
                                     })
@@ -279,26 +359,20 @@ mod test {
                                 then_arm: ExprSpan {
                                     span: 22..34,
                                     column: 10,
-                                    elem: Box::new(Block {
+                                    elem: Box::new(Expr::Block {
                                         instructions: vec![
                                             ExprSpan {
                                                 span: 22..23,
                                                 column: 10,
-                                                elem: Statement::StmtExpr(Literal(ExprSpan {
-                                                    span: 22..23,
-                                                    column: 10,
-                                                    elem: ast::Literal::Num("4"),
-                                                }))
+                                                elem: Statement::StmtExpr(Expr::Literal(
+                                                    ast::Literal::Num("4"),
+                                                ))
                                             },
                                             ExprSpan {
                                                 span: 33..34,
                                                 column: 10,
                                                 elem: Statement::StmtExpr(Expr::Literal(
-                                                    ExprSpan {
-                                                        span: 33..34,
-                                                        column: 10,
-                                                        elem: ast::Literal::Num("2"),
-                                                    }
+                                                    ast::Literal::Num("2"),
                                                 ))
                                             }
                                         ]
@@ -307,7 +381,7 @@ mod test {
                                 else_arm: Some(ExprSpan {
                                     span: 10..75,
                                     column: 10,
-                                    elem: Box::new(Block {
+                                    elem: Box::new(Expr::Block {
                                         instructions: vec![ExprSpan {
                                             span: 10..75,
                                             column: 10,
@@ -315,16 +389,14 @@ mod test {
                                                 condition: ExprSpan {
                                                     span: 47..51,
                                                     column: 13,
-                                                    elem: Box::new(Block {
+                                                    elem: Box::new(Expr::Block {
                                                         instructions: vec![ExprSpan {
                                                             span: 47..51,
                                                             column: 13,
                                                             elem: Statement::StmtExpr(
-                                                                Expr::Literal(ExprSpan {
-                                                                    span: 47..51,
-                                                                    column: 13,
-                                                                    elem: ast::Literal::Bool(true)
-                                                                })
+                                                                Expr::Literal(ast::Literal::Bool(
+                                                                    true
+                                                                ))
                                                             )
                                                         }]
                                                     })
@@ -332,16 +404,14 @@ mod test {
                                                 then_arm: ExprSpan {
                                                     span: 57..58,
                                                     column: 23,
-                                                    elem: Box::new(Block {
+                                                    elem: Box::new(Expr::Block {
                                                         instructions: vec![ExprSpan {
                                                             span: 57..58,
                                                             column: 23,
                                                             elem: Statement::StmtExpr(
-                                                                Expr::Literal(ExprSpan {
-                                                                    span: 57..58,
-                                                                    column: 23,
-                                                                    elem: ast::Literal::Num("2"),
-                                                                })
+                                                                Expr::Literal(ast::Literal::Num(
+                                                                    "2"
+                                                                ),)
                                                             )
                                                         }]
                                                     })
@@ -349,16 +419,14 @@ mod test {
                                                 else_arm: Some(ExprSpan {
                                                     span: 74..75,
                                                     column: 15,
-                                                    elem: Box::new(Block {
+                                                    elem: Box::new(Expr::Block {
                                                         instructions: vec![ExprSpan {
                                                             span: 74..75,
                                                             column: 15,
                                                             elem: Statement::StmtExpr(
-                                                                Expr::Literal(ExprSpan {
-                                                                    span: 74..75,
-                                                                    column: 15,
-                                                                    elem: ast::Literal::Num("4"),
-                                                                })
+                                                                Expr::Literal(ast::Literal::Num(
+                                                                    "4"
+                                                                ),)
                                                             )
                                                         }]
                                                     })
@@ -372,15 +440,11 @@ mod test {
                         ExprSpan {
                             span: 80..82,
                             column: 5,
-                            elem: Statement::StmtExpr(Expr::Literal(ExprSpan {
-                                span: 80..82,
-                                column: 5,
-                                elem: ast::Literal::Num("15"),
-                            }))
+                            elem: Statement::StmtExpr(Expr::Literal(ast::Literal::Num("15"),))
                         }
                     ]
                 }
-            })
+            }
         );
     }
 }
