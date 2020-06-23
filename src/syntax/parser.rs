@@ -1,12 +1,13 @@
 use std::{iter::Peekable, ops::Range};
 
 use crate::{
-    errors::err::{Error, ErrorInfo, Expected},
+    errors::err::{Error, ErrorInfo, Expected, ParseResult},
     syntax::{
         ast::*,
         tokens::{Delimiter, Spanned, SpannedTok, Token},
     },
 };
+
 macro_rules! token {
     ($name: ident, $p: pat, $expected: literal) => {
         pub fn $name(&mut self) -> Result<SpannedTok<'a>, ErrorInfo<'a>> {
@@ -16,7 +17,6 @@ macro_rules! token {
             let (span, error) = self.next_or_eof();
             Err(ErrorInfo {
                 expected: Some(Expected::Named($expected)),
-                found: None,
                 span,
                 error,
             })
@@ -43,10 +43,7 @@ where
             last_newline: 0,
         }
     }
-    pub fn if_then_else(
-        &mut self,
-        enclosing_ctx: usize,
-    ) -> Result<ExprSpan<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let if_ctx = self.if_()?.span.start - self.last_newline;
         let condition = self.block(if_ctx)?;
         match self.then() {
@@ -61,6 +58,7 @@ where
                                 elem: Token::Then, ..
                             },
                         ),
+                    ..
                 }) if n == if_ctx => {
                     self.next();
                 }
@@ -69,8 +67,7 @@ where
                     return Err(ErrorInfo {
                         error,
                         span,
-                        found: None,
-                        expected: Some(Expected::Named("An then block")),
+                        expected: Some(Expected::Named("A then block")),
                     });
                 }
             },
@@ -88,6 +85,7 @@ where
                                 elem: Token::Else, ..
                             },
                         ),
+                    ..
                 }) if n == if_ctx => {
                     self.indentation();
                     self.next();
@@ -100,7 +98,7 @@ where
             Some(v) => v.span.end,
             None => then_arm.span.end,
         };
-        Ok(ExprSpan {
+        Ok(Spanned {
             elem: Expr::IfThenElse {
                 condition: condition.into(),
                 then_arm: then_arm.into(),
@@ -110,9 +108,9 @@ where
             span: if_ctx..end,
         })
     }
-    pub fn block(&mut self, enclosing_ctx: usize) -> Result<ExprSpan<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn block(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let (start, block_ctx, first_statement) = self
-            .statement(enclosing_ctx)
+            .statement()
             .map(|v| (v.span.start, v.column, v))
             .or_else(|_| {
                 if let Some(SpannedTok {
@@ -121,15 +119,14 @@ where
                 }) = self.indentation()
                 {
                     if n > enclosing_ctx {
-                        return Ok((n, n, self.statement(enclosing_ctx)?));
+                        return Ok((n, n, self.statement()?));
                     }
                 }
                 let (span, error) = self.next_or_eof();
                 return Err(ErrorInfo {
+                    expected: Some(Expected::Named("An expression")),
                     error,
                     span,
-                    found: None,
-                    expected: Some(Expected::Named("An expression")),
                 });
             })?;
         let mut instructions = vec![first_statement];
@@ -138,58 +135,147 @@ where
                 Some(SpannedTok {
                     elem: Token::Indent(n, _),
                     span,
+                    ..
                 }) if *n == block_ctx => {
-                    self.indentation();
-                    instructions.push(self.statement(enclosing_ctx)?);
+                    self.next();
+                    instructions.push(self.statement()?);
                 }
                 _ => break,
             }
         }
         let end = instructions.last().unwrap().span.end;
-        Ok(ExprSpan {
+        Ok(Spanned {
             span: start..end,
             column: block_ctx,
             elem: Expr::Block { instructions },
         })
     }
-    fn expr(&mut self, enclosing_ctx: usize) -> Result<ExprSpan<Expr<'a>>, ErrorInfo<'a>> {
-        self.identifier()
-            .or_else(|_| self.num())
+    fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        self.num()
             .or_else(|_| self.bool())
-            .map(|Spanned { span, elem }| match elem {
-                Token::Ident(i) => ExprSpan {
-                    elem: Expr::Ident(ExprSpan {
-                        span: span.clone(),
-                        elem: i,
-                        column: span.start - self.last_newline,
-                    }),
-                    column: span.start - self.last_newline,
-                    span,
-                },
-                Token::Num(n) => ExprSpan {
+            .map(|Spanned { span, elem, .. }| match elem {
+                Token::Num(n) => Spanned {
                     elem: Expr::Literal(Literal::Num(n)),
                     column: span.start - self.last_newline,
                     span,
                 },
-                Token::Bool(b) => ExprSpan {
+                Token::Bool(b) => Spanned {
                     elem: Expr::Literal(Literal::Bool(b)),
                     column: span.start - self.last_newline,
                     span,
                 },
                 _ => unreachable!(),
             })
-            .or_else(|_| self.if_then_else(enclosing_ctx))
+            .or_else(|_| self.if_then_else())
+            .or_else(|_| self.function_call())
     }
-    fn statement(
-        &mut self,
-        enclosing_ctx: usize,
-    ) -> Result<ExprSpan<Statement<'a>>, ErrorInfo<'a>> {
-        self.expr(enclosing_ctx)
-            .map(|ExprSpan { span, elem, column }| ExprSpan {
-                span,
-                column,
-                elem: Statement::StmtExpr(elem),
+
+    fn statement(&mut self) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
+        self.expr().map(|Spanned { span, elem, column }| Spanned {
+            span,
+            column,
+            elem: Statement::StmtExpr(elem),
+        })
+    }
+    fn function_call(&mut self) -> ParseResult<'a, Expr<'a>> {
+        let function = self.ident()?;
+        let fun_ctx = function.column;
+        let mut params = vec![];
+        let mut sub_ctx = None;
+        loop {
+            match self.expr() {
+                Ok(v) => params.push(v),
+                _ => match self.peek() {
+                    Some(Spanned {
+                        elem: Token::Indent(n, _),
+                        span,
+                        ..
+                    }) if *n > fun_ctx => match sub_ctx {
+                        Some(level) if level == *n => {
+                            self.next();
+                            params.push(self.expr()?);
+                        }
+                        Some(_) => {
+                            return Err(ErrorInfo {
+                                expected: Some(Expected::Named("A function argument")),
+                                error: Error::LayoutError("All the argument placed in a function call sub context are supposed to be on the same column") ,
+                                span: fun_ctx..span.end,
+                            });
+                        }
+                        None => {
+                            sub_ctx = Some(*n);
+                            self.next();
+                            params.push(self.expr()?);
+                        }
+                    },
+                    _ => break,
+                },
+            }
+        }
+        if params.is_empty() {
+            Ok(function)
+        } else {
+            Ok(Spanned {
+                column: fun_ctx,
+                span: function.span.start..params.last().unwrap().span.end,
+                elem: Expr::Call(function.into(), params),
             })
+        }
+    }
+    fn ident(&mut self) -> ParseResult<'a, Expr<'a>> {
+        self.identifier()
+            .map(|Spanned { span, elem, .. }| match elem {
+                Token::Ident(i) => Spanned {
+                    elem: Expr::Ident(Spanned {
+                        span: span.clone(),
+                        column: span.start - self.last_newline,
+                        elem: i,
+                    }),
+                    column: span.start - self.last_newline,
+                    span,
+                },
+                _ => unreachable!(),
+            })
+    }
+    fn indentation(&mut self) -> Option<SpannedTok<'a>> {
+        if let Some(Spanned {
+            elem: Token::Indent(_, _),
+            span,
+            ..
+        }) = self.peek()
+        {
+            self.last_newline = span.start;
+            return self.next();
+        }
+        None
+    }
+
+    fn next_or_eof(&mut self) -> (Range<usize>, Error<'a>) {
+        match self.peek() {
+            Some(Spanned {
+                span,
+                elem: Token::EOF,
+                ..
+            }) => (span.clone(), Error::UnexpectedEOF),
+            Some(Spanned { span, elem, .. }) => (span.clone(), Error::UnexpectedTok(elem.clone())),
+            _ => unreachable!(),
+        }
+    }
+    fn next(&mut self) -> Option<SpannedTok<'a>> {
+        let v = self.tokens.next();
+        if let Some(Spanned {
+            elem: Token::Indent(_, _),
+            span,
+            ..
+        }) = &v
+        {
+            self.last_newline = span.start;
+        }
+        v
+    }
+
+    fn peek(&mut self) -> Option<&SpannedTok<'a>> {
+        self.tokens.peek()
     }
 
     token!(
@@ -210,37 +296,45 @@ where
     token!(num, Token::Num(_), "number");
     token!(identifier, Token::Ident(_), "identifier");
     token!(bool, Token::Bool(_), "boolean");
-    fn indentation(&mut self) -> Option<SpannedTok<'a>> {
-        if let Some(Spanned {
-            elem: Token::Indent(_, _),
-            span,
-        }) = self.peek()
-        {
-            self.last_newline = span.start;
-            return self.next();
+}
+
+// SHUNTING YARD
+
+enum SYOp {
+    Unary(UnOp),
+    Binary(BinOp),
+}
+impl<'a, I> Parser<'a, I>
+where
+    I: Iterator<Item = SpannedTok<'a>>,
+{
+    /*#[allow(unused)]
+    fn shunting_yard(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        match self.sy_atom(){
         }
-        None
-    }
-
-    fn next_or_eof(&mut self) -> (Range<usize>, Error<'a>) {
-        match self.peek() {
-            Some(Spanned {
-                span,
-                elem: Token::EOF,
-            }) => (span.clone(), Error::UnexpectedEOF),
-            Some(Spanned { span, elem }) => (span.clone(), Error::UnexpectedTok(elem.clone())),
-            _ => unreachable!(),
-        }
-    }
-
-    fn next(&mut self) -> Option<SpannedTok<'a>> {
-        self.tokens.next()
-    }
-
-    fn peek(&mut self) -> Option<&SpannedTok<'a>> {
-        self.tokens.peek()
+    }*/
+    fn sy_atom(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+        self.num()
+            .or_else(|_| self.bool())
+            .map(|Spanned { span, elem, .. }| match elem {
+                Token::Num(n) => Spanned {
+                    elem: Expr::Literal(Literal::Num(n)),
+                    column: span.start - self.last_newline,
+                    span,
+                },
+                Token::Bool(b) => Spanned {
+                    elem: Expr::Literal(Literal::Bool(b)),
+                    column: span.start - self.last_newline,
+                    span,
+                },
+                _ => unreachable!(),
+            })
+            .or_else(|_| self.if_then_else())
+            .or_else(|_| self.function_call())
     }
 }
+
+// TESTS
 
 #[allow(unused)]
 mod test {
@@ -256,19 +350,19 @@ mod test {
         let result = parser.block(0).unwrap();
         assert_eq!(
             result,
-            ExprSpan {
+            Spanned {
                 span: 5..39,
                 column: 5,
                 elem: Expr::Block {
-                    instructions: vec![ExprSpan {
+                    instructions: vec![Spanned {
                         span: 5..39,
                         column: 5,
                         elem: Statement::StmtExpr(Expr::IfThenElse {
-                            condition: ExprSpan {
+                            condition: Spanned {
                                 span: 8..12,
                                 column: 8,
                                 elem: Box::new(Expr::Block {
-                                    instructions: vec![ExprSpan {
+                                    instructions: vec![Spanned {
                                         span: 8..12,
                                         column: 8,
                                         elem: Statement::StmtExpr(Expr::Literal(
@@ -277,11 +371,11 @@ mod test {
                                     }]
                                 })
                             },
-                            then_arm: ExprSpan {
+                            then_arm: Spanned {
                                 span: 18..19,
                                 column: 18,
                                 elem: Box::new(Expr::Block {
-                                    instructions: vec![ExprSpan {
+                                    instructions: vec![Spanned {
                                         span: 18..19,
                                         column: 18,
                                         elem: Statement::StmtExpr(Expr::Literal(
@@ -290,19 +384,19 @@ mod test {
                                     }]
                                 })
                             },
-                            else_arm: Some(ExprSpan {
+                            else_arm: Some(Spanned {
                                 span: 25..39,
                                 column: 25,
                                 elem: Box::new(Expr::Block {
-                                    instructions: vec![ExprSpan {
+                                    instructions: vec![Spanned {
                                         span: 25..39,
                                         column: 25,
                                         elem: Statement::StmtExpr(Expr::IfThenElse {
-                                            condition: ExprSpan {
+                                            condition: Spanned {
                                                 span: 28..32,
                                                 column: 28,
                                                 elem: Box::new(Expr::Block {
-                                                    instructions: vec![ExprSpan {
+                                                    instructions: vec![Spanned {
                                                         span: 28..32,
                                                         column: 28,
                                                         elem: Statement::StmtExpr(Expr::Literal(
@@ -311,11 +405,11 @@ mod test {
                                                     }]
                                                 })
                                             },
-                                            then_arm: ExprSpan {
+                                            then_arm: Spanned {
                                                 span: 38..39,
                                                 column: 38,
                                                 elem: Box::new(Expr::Block {
-                                                    instructions: vec![ExprSpan {
+                                                    instructions: vec![Spanned {
                                                         span: 38..39,
                                                         column: 38,
                                                         elem: Statement::StmtExpr(Expr::Literal(
@@ -350,21 +444,21 @@ mod test {
         let result = parser.block(0).unwrap();
         assert_eq!(
             result,
-            ExprSpan {
+            Spanned {
                 span: 5..82,
                 column: 5,
                 elem: Expr::Block {
                     instructions: vec![
-                        ExprSpan {
+                        Spanned {
                             span: 5..75,
                             column: 5,
                             elem: Statement::StmtExpr(Expr::IfThenElse {
-                                condition: ExprSpan {
+                                condition: Spanned {
                                     span: 8..12,
                                     column: 8,
                                     elem: Box::new(Expr::Block {
                                         instructions: vec![{
-                                            ExprSpan {
+                                            Spanned {
                                                 span: 8..12,
                                                 column: 8,
                                                 elem: Statement::StmtExpr(Expr::Literal(
@@ -374,19 +468,19 @@ mod test {
                                         }]
                                     })
                                 },
-                                then_arm: ExprSpan {
+                                then_arm: Spanned {
                                     span: 22..34,
                                     column: 10,
                                     elem: Box::new(Expr::Block {
                                         instructions: vec![
-                                            ExprSpan {
+                                            Spanned {
                                                 span: 22..23,
                                                 column: 10,
                                                 elem: Statement::StmtExpr(Expr::Literal(
                                                     ast::Literal::Num("4"),
                                                 ))
                                             },
-                                            ExprSpan {
+                                            Spanned {
                                                 span: 33..34,
                                                 column: 10,
                                                 elem: Statement::StmtExpr(Expr::Literal(
@@ -396,19 +490,19 @@ mod test {
                                         ]
                                     })
                                 },
-                                else_arm: Some(ExprSpan {
+                                else_arm: Some(Spanned {
                                     span: 10..75,
                                     column: 10,
                                     elem: Box::new(Expr::Block {
-                                        instructions: vec![ExprSpan {
+                                        instructions: vec![Spanned {
                                             span: 10..75,
                                             column: 10,
                                             elem: Statement::StmtExpr(Expr::IfThenElse {
-                                                condition: ExprSpan {
+                                                condition: Spanned {
                                                     span: 47..51,
                                                     column: 13,
                                                     elem: Box::new(Expr::Block {
-                                                        instructions: vec![ExprSpan {
+                                                        instructions: vec![Spanned {
                                                             span: 47..51,
                                                             column: 13,
                                                             elem: Statement::StmtExpr(
@@ -419,11 +513,11 @@ mod test {
                                                         }]
                                                     })
                                                 },
-                                                then_arm: ExprSpan {
+                                                then_arm: Spanned {
                                                     span: 57..58,
                                                     column: 23,
                                                     elem: Box::new(Expr::Block {
-                                                        instructions: vec![ExprSpan {
+                                                        instructions: vec![Spanned {
                                                             span: 57..58,
                                                             column: 23,
                                                             elem: Statement::StmtExpr(
@@ -434,11 +528,11 @@ mod test {
                                                         }]
                                                     })
                                                 },
-                                                else_arm: Some(ExprSpan {
+                                                else_arm: Some(Spanned {
                                                     span: 74..75,
                                                     column: 15,
                                                     elem: Box::new(Expr::Block {
-                                                        instructions: vec![ExprSpan {
+                                                        instructions: vec![Spanned {
                                                             span: 74..75,
                                                             column: 15,
                                                             elem: Statement::StmtExpr(
@@ -455,7 +549,7 @@ mod test {
                                 })
                             })
                         },
-                        ExprSpan {
+                        Spanned {
                             span: 80..82,
                             column: 5,
                             elem: Statement::StmtExpr(Expr::Literal(ast::Literal::Num("15"),))

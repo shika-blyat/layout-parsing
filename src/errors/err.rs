@@ -3,11 +3,10 @@
 use crate::syntax::tokens::{Span, Spanned, Token};
 #[allow(unused)]
 pub type SpannedErr<'a> = Spanned<Error<'a>>;
-
+pub type ParseResult<'a, T> = Result<Spanned<T>, ErrorInfo<'a>>;
 #[derive(Debug, PartialEq)]
 pub struct ErrorInfo<'a> {
     pub expected: Option<Expected>,
-    pub found: Option<Found>,
     pub error: Error<'a>,
     pub span: Span,
 }

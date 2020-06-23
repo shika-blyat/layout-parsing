@@ -18,7 +18,10 @@ fn main() {
     let code2 = "
     if True 
     then 
-  4
+      4
+    else abc
+          4
+          8
 ";
     let lexer = Lexer::new(code2);
     let tokens = lexer.tokenize();

@@ -5,10 +5,11 @@ use std::ops::Range;
 
 pub type Span = Range<usize>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Spanned<T> {
+    pub span: Range<usize>,
+    pub column: usize,
     pub elem: T,
-    pub span: Span,
 }
 
 pub type SpannedTok<'a> = Spanned<Token<'a>>;
@@ -17,7 +18,7 @@ pub type SpannedTok<'a> = Spanned<Token<'a>>;
 pub enum Token<'a> {
     Op(&'a str),
 
-    // I don't want to handle literal overflow and everything during parsing, that'd be ugly imo, so I just store them as strings
+    // I don't want to handle literal overflow and everything during lexing, so I just store them as strings
     Num(&'a str),
 
     Str(&'a str),

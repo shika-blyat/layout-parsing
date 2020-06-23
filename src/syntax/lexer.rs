@@ -1,14 +1,10 @@
-use std::{convert::TryFrom, iter::Peekable, str::CharIndices};
+use std::{convert::TryFrom, iter::Peekable, str::Chars};
 
 use crate::{
     errors::err::*,
     syntax::tokens::{Spanned, SpannedTok, Token},
 };
 
-pub struct Lexer<'a> {
-    source: &'a str,
-    chars: Peekable<CharIndices<'a>>,
-}
 macro_rules! many {
     ($name: ident, $predicate: expr, $token: path) => {
         pub fn $name(&mut self, start: usize) -> SpannedTok<'a> {
@@ -21,85 +17,103 @@ macro_rules! many {
             return Spanned {
                 elem: Token::try_from(s).unwrap_or($token(s)),
                 span,
+                column: start - self.last_newline,
             };
         }
     };
+}
+
+pub struct Lexer<'a> {
+    source: &'a str,
+    chars: Peekable<Chars<'a>>,
+    byte_pos: usize,
+    last_newline: usize,
 }
 impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             source,
-            chars: source.char_indices().peekable(),
+            chars: source.chars().peekable(),
+            byte_pos: 0,
+            last_newline: 0,
         }
     }
     pub fn tokenize(mut self) -> Result<Vec<SpannedTok<'a>>, ErrorInfo<'a>> {
         let mut tokens = vec![];
         let mut last_indent = None;
-        while let Some((pos, char)) = self.next() {
+        while let Some(char) = self.next() {
             match char {
-                c if c.is_ascii_digit() => tokens.push(self.num(pos)),
-                c if c.is_alphabetic() => tokens.push(self.ident(pos)),
-                '"' => tokens.push(self.string(pos)?),
+                c if c.is_ascii_digit() => tokens.push(self.num(self.byte_pos - 1)),
+                c if c.is_alphabetic() => tokens.push(self.ident(self.byte_pos - 1)),
+                '"' => tokens.push(self.string(self.byte_pos)?),
                 '(' | ')' | '{' | '}' | '+' | '-' | '*' | '/' => tokens.push(SpannedTok {
-                    span: pos..pos + 1,
-                    elem: Token::try_from(&self.source[pos..pos + 2]).unwrap(),
+                    column: self.byte_pos - self.last_newline - 1,
+                    span: self.byte_pos - 1..self.byte_pos,
+                    elem: Token::try_from(&self.source[self.byte_pos - 1..self.byte_pos]).unwrap(),
                 }),
                 '=' | '!' => match self.peek() {
-                    Some((_, '=')) => {
+                    Some('=') => {
                         self.next();
                         tokens.push(SpannedTok {
-                            elem: Token::Op(&self.source[pos..pos + 2]),
-                            span: pos..pos + 2,
+                            column: self.byte_pos - self.last_newline - 2,
+                            elem: Token::Op(&self.source[self.byte_pos - 1..self.byte_pos + 1]),
+                            span: self.byte_pos - 1..self.byte_pos + 1,
                         })
                     }
                     _ => tokens.push(SpannedTok {
-                        elem: Token::Op(&self.source[pos..pos + 1]),
-                        span: pos..pos + 1,
+                        column: self.byte_pos - self.last_newline - 1,
+                        elem: Token::Op(&self.source[self.byte_pos - 1..self.byte_pos]),
+                        span: self.byte_pos - 1..self.byte_pos,
                     }),
                 },
                 '&' | '|' => match self.peek() {
-                    Some((_, c)) if c == &char => {
-                        self.next();
+                    Some(c) if c == &char => {
+                        let c = self.next().unwrap();
                         tokens.push(SpannedTok {
-                            elem: Token::Op(&self.source[pos..pos + 2]),
-                            span: pos..pos + 2,
+                            column: self.byte_pos - 2 - self.last_newline,
+                            elem: Token::Op(
+                                &self.source[self.byte_pos..self.byte_pos + c.len_utf8()],
+                            ),
+                            span: self.byte_pos - 1..self.byte_pos + 1,
                         })
                     }
                     _ => tokens.push(SpannedTok {
-                        elem: Token::Op(&self.source[pos..pos + 1]),
-                        span: pos..pos + 1,
+                        column: self.byte_pos - self.last_newline - 1,
+                        elem: Token::Op(&self.source[self.byte_pos - 1..self.byte_pos]),
+                        span: self.byte_pos - 1..self.byte_pos,
                     }),
                 },
                 '\n' => {
+                    self.last_newline = self.byte_pos;
                     if tokens.is_empty() {
                         continue;
                     }
                     let mut counter = 1;
-                    while let Some((_, ' ')) = self.peek() {
+                    while let Some(' ') = self.peek() {
                         self.next();
                         counter += 1;
                     }
-                    if let Some((pos, c)) = self.peek() {
+                    if let Some(c) = self.peek() {
                         if *c == '\n' {
                             continue;
                         }
-                        last_indent = Some((counter, pos - counter..*pos));
+                        last_indent = Some((counter, self.byte_pos - counter..self.byte_pos));
                     }
                     continue;
                 }
                 ' ' | '\t' | '\r' => (),
-                c => {
+                _ => {
                     return Err(ErrorInfo {
-                        span: pos..pos + 1,
+                        span: self.byte_pos - 1..self.byte_pos,
                         error: Error::UnexpectedChar(char),
                         expected: None,
-                        found: Some(Found::Char(c)),
                     })
                 }
             }
             if let Some((size, ref span)) = last_indent {
                 let last_tok = tokens.pop().unwrap();
                 tokens.push(SpannedTok {
+                    column: self.byte_pos - self.last_newline - 1,
                     elem: Token::Indent(size, Box::new(last_tok.clone())),
                     span: span.clone(),
                 });
@@ -108,7 +122,8 @@ impl<'a> Lexer<'a> {
             }
         }
         tokens.push(SpannedTok {
-            span: std::usize::MAX..std::usize::MAX, //codespan will take care of this, and even if the range goes out of the string, it will just display the range we're targeting
+            column: self.byte_pos - self.last_newline,
+            span: self.byte_pos - 1..self.byte_pos, //codespan will take care of this, and even if the range goes out of the string, it will just display the range we're targeting
             //as the final element of the string
             elem: Token::EOF,
         });
@@ -118,14 +133,13 @@ impl<'a> Lexer<'a> {
         let mut length = 0;
         loop {
             match self.next() {
-                Some((_, '"')) => break,
-                Some(_) => length += 1,
+                Some('"') => break,
+                Some(c) => length += c.len_utf8(),
                 None => {
                     return Err(ErrorInfo {
                         span: start..start + length,
                         error: Error::UnclosedStringLiteral,
                         expected: Some(Expected::Named("an enclosing quote")),
-                        found: Some(Found::Named("an EOF")),
                     })
                 }
             }
@@ -133,6 +147,7 @@ impl<'a> Lexer<'a> {
         self.next();
         let span = start - 1..start + length;
         return Ok(Spanned {
+            column: self.byte_pos - length - self.last_newline,
             elem: Token::Str(&self.source[span.clone()]),
             span,
         });
@@ -141,19 +156,23 @@ impl<'a> Lexer<'a> {
     many!(num, |c| c.is_ascii_digit(), Token::Num);
     many!(ident, |c| c.is_alphanumeric(), Token::Ident);
 
-    pub fn next_if(&mut self, predicate: impl Fn(char) -> bool) -> Option<(usize, char)> {
-        if predicate(self.peek()?.1) {
+    pub fn next_if(&mut self, predicate: impl Fn(char) -> bool) -> Option<char> {
+        if predicate(*self.peek()?) {
             return self.next();
         }
         None
     }
-    fn peek(&mut self) -> Option<&(usize, char)> {
+    fn peek(&mut self) -> Option<&char> {
         self.chars.peek()
     }
 }
 impl Iterator for Lexer<'_> {
-    type Item = (usize, char);
-    fn next(&mut self) -> Option<(usize, char)> {
-        self.chars.next()
+    type Item = char;
+    fn next(&mut self) -> Option<char> {
+        if let Some(c) = self.chars.next() {
+            self.byte_pos += c.len_utf8();
+            return Some(c);
+        }
+        None
     }
 }
