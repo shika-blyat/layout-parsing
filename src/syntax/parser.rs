@@ -29,7 +29,6 @@ where
     I: Iterator<Item = SpannedTok<'a>>,
 {
     tokens: Peekable<I>,
-    last_newline: usize,
 }
 
 #[allow(unused)]
@@ -40,7 +39,6 @@ where
     pub fn new(tokens: I) -> Self {
         Self {
             tokens: tokens.peekable(),
-            last_newline: 0,
         }
     }
     pub fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
@@ -223,14 +221,14 @@ where
     }
     fn ident(&mut self) -> ParseResult<'a, Expr<'a>> {
         self.identifier()
-            .map(|Spanned { span, elem, .. }| match elem {
+            .map(|Spanned { span, elem, column }| match elem {
                 Token::Ident(i) => Spanned {
                     elem: Expr::Ident(Spanned {
                         span: span.clone(),
-                        column: span.start - self.last_newline,
+                        column: column,
                         elem: i,
                     }),
-                    column: span.start - self.last_newline,
+                    column: column,
                     span,
                 },
                 _ => unreachable!(),
@@ -243,7 +241,6 @@ where
             ..
         }) = self.peek()
         {
-            self.last_newline = span.start;
             return self.next();
         }
         None
@@ -262,14 +259,6 @@ where
     }
     fn next(&mut self) -> Option<SpannedTok<'a>> {
         let v = self.tokens.next();
-        if let Some(Spanned {
-            elem: Token::Newline(_),
-            span,
-            ..
-        }) = &v
-        {
-            self.last_newline = span.start;
-        }
         v
     }
 
@@ -315,15 +304,15 @@ where
     fn sy_atom(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         self.num()
             .or_else(|_| self.bool())
-            .map(|Spanned { span, elem, .. }| match elem {
+            .map(|Spanned { span, elem, column }| match elem {
                 Token::Num(n) => Spanned {
                     elem: Expr::Literal(Literal::Num(n)),
-                    column: span.start - self.last_newline,
+                    column,
                     span,
                 },
                 Token::Bool(b) => Spanned {
                     elem: Expr::Literal(Literal::Bool(b)),
-                    column: span.start - self.last_newline,
+                    column,
                     span,
                 },
                 _ => unreachable!(),
