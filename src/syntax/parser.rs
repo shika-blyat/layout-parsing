@@ -1,5 +1,3 @@
-use std::{iter::Peekable, ops::Range};
-
 use crate::{
     errors::err::{Error, ErrorInfo, Expected, ParseResult},
     syntax::{
@@ -7,6 +5,7 @@ use crate::{
         tokens::{Delimiter, Spanned, SpannedTok, Token},
     },
 };
+use std::{iter::Peekable, ops::Range};
 
 macro_rules! token {
     ($name: ident, $p: pat, $expected: literal) => {
@@ -28,7 +27,7 @@ pub struct Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
 {
-    tokens: Peekable<I>,
+    pub(super) tokens: Peekable<I>,
 }
 
 #[allow(unused)]
@@ -41,7 +40,7 @@ where
             tokens: tokens.peekable(),
         }
     }
-    pub fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub(super) fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
         let if_ctx = self.if_()?.column;
         let condition = self.block(if_ctx)?;
         match self.then() {
@@ -148,23 +147,7 @@ where
         })
     }
     fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        self.num()
-            .or_else(|_| self.bool())
-            .map(|Spanned { span, elem, column }| match elem {
-                Token::Num(n) => Spanned {
-                    elem: Expr::Literal(Literal::Num(n)),
-                    column,
-                    span,
-                },
-                Token::Bool(b) => Spanned {
-                    elem: Expr::Literal(Literal::Bool(b)),
-                    column,
-                    span,
-                },
-                _ => unreachable!(),
-            })
-            .or_else(|_| self.if_then_else())
-            .or_else(|_| self.function_call())
+        self.shunting_yard()
     }
 
     fn statement(&mut self) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
@@ -174,7 +157,7 @@ where
             elem: Statement::StmtExpr(elem),
         })
     }
-    fn function_call(&mut self) -> ParseResult<'a, Expr<'a>> {
+    pub(super) fn function_call(&mut self) -> ParseResult<'a, Expr<'a>> {
         let function = self.ident()?;
         let fun_ctx = function.column;
         let mut params = vec![];
@@ -284,42 +267,7 @@ where
     token!(num, Token::Num(_), "number");
     token!(identifier, Token::Ident(_), "identifier");
     token!(bool, Token::Bool(_), "boolean");
-}
-
-// SHUNTING YARD
-
-enum SYOp {
-    Unary(UnOp),
-    Binary(BinOp),
-}
-impl<'a, I> Parser<'a, I>
-where
-    I: Iterator<Item = SpannedTok<'a>>,
-{
-    /*#[allow(unused)]
-    fn shunting_yard(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        match self.sy_atom(){
-        }
-    }*/
-    fn sy_atom(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        self.num()
-            .or_else(|_| self.bool())
-            .map(|Spanned { span, elem, column }| match elem {
-                Token::Num(n) => Spanned {
-                    elem: Expr::Literal(Literal::Num(n)),
-                    column,
-                    span,
-                },
-                Token::Bool(b) => Spanned {
-                    elem: Expr::Literal(Literal::Bool(b)),
-                    column,
-                    span,
-                },
-                _ => unreachable!(),
-            })
-            .or_else(|_| self.if_then_else())
-            .or_else(|_| self.function_call())
-    }
+    token!(operator, Token::Op(_), "operator");
 }
 
 // TESTS

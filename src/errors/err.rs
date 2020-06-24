@@ -23,8 +23,3 @@ pub enum Error<'a> {
 pub enum Expected {
     Named(&'static str),
 }
-#[derive(Debug, PartialEq)]
-pub enum Found {
-    Named(&'static str),
-    Char(char),
-}

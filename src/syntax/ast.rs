@@ -1,6 +1,5 @@
 // TODO Add modules
 use super::tokens::Spanned;
-use std::ops::Range;
 
 pub type BoxSpanned<T> = Spanned<Box<T>>;
 pub type Ident<'a> = &'a str;
@@ -39,6 +38,7 @@ pub enum Expr<'a> {
 pub enum Statement<'a> {
     Return(Expr<'a>),
     Continue,
+    Assignment(Ident<'a>, Expr<'a>),
     Break(Expr<'a>),
     StmtExpr(Expr<'a>),
 }
@@ -52,6 +52,8 @@ pub enum BinOp {
     Div,
     And,
     Or,
+    NotEq,
+    EqEq,
     LT,
     LTE,
     GT,
