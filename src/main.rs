@@ -20,7 +20,7 @@ fn main() {
     then 4
          2
     else if True then 2 
-         else 4 + -2 * 2
+         else (4 + -2) * 2
     15
 ";
   let lexer = Lexer::new(code2);

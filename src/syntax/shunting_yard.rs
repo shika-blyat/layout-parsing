@@ -14,18 +14,38 @@ where
     I: Iterator<Item = SpannedTok<'a>>,
 {
     #[allow(unused)]
-    pub(super) fn shunting_yard(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
-        let mut ast_stack = vec![self.atom()?];
+    pub(super) fn shunting_yard(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let mut op_stack: Vec<Spanned<Operator<'_>>> = vec![];
+        let mut ast_stack = vec![];
+        self.push_atom(&mut ast_stack, &mut op_stack)?;
         loop {
-            match self.bin_op() {
+            match self.bin_op_or_rparen() {
+                Ok(op) if op.elem.sym == ")" => {
+                    loop {
+                        match op_stack.last() {
+                            Some(last_op) if last_op.elem.sym == "(" => {
+                                op_stack.pop().unwrap();
+                                break;
+                            }
+                            Some(last_op) if last_op.elem.is_infix() => {
+                                let op = op_stack.pop().unwrap();
+                                Self::push_infix(&mut ast_stack, op);
+                            }
+                            Some(last_op) if last_op.elem.is_prefix() => {
+                                let op = op_stack.pop().unwrap();
+                                Self::push_prefix(&mut ast_stack, op);
+                            }
+                            _ => todo!("raise an error"),
+                        }
+                    }
+                    continue;
+                }
                 Ok(op) => {
                     loop {
                         match op_stack.last() {
                             Some(last_op)
-                                if last_op.elem.is_infix() && last_op.elem.prec > op.elem.prec
-                                    || (last_op.elem.prec == op.elem.prec
-                                        && op.elem.is_left_assoc()) =>
+                                if last_op.elem.is_infix()
+                                    && last_op.elem.has_bigger_prec(&op.elem) =>
                             {
                                 let op = op_stack.pop().unwrap();
                                 Self::push_infix(&mut ast_stack, op);
@@ -41,21 +61,17 @@ where
                 }
                 _ => break,
             }
-            while let Ok(op) = self.un_op() {
-                op_stack.push(op);
-            }
-            ast_stack.push(self.atom()?);
+            self.push_atom(&mut ast_stack, &mut op_stack)?;
         }
         for op in op_stack.into_iter().rev() {
             if op.elem.is_infix() {
-                Self::push_infix(&mut ast_stack, op)
+                Self::push_infix(&mut ast_stack, op);
             } else if op.elem.is_prefix() {
                 Self::push_prefix(&mut ast_stack, op);
             }
         }
         return Ok(ast_stack.into_iter().next().unwrap());
     }
-
     fn push_infix(ast: &mut Vec<Spanned<Expr<'a>>>, op: Spanned<Operator<'a>>) {
         let right = ast.pop().unwrap();
         let left = ast.pop().unwrap();
@@ -74,35 +90,80 @@ where
             elem: Expr::Unary(op.elem.try_into().unwrap(), right.into()),
         })
     }
-    fn bin_op(&mut self) -> Result<Spanned<Operator<'a>>, ErrorInfo<'a>> {
-        self.operator().map(|v| match v {
-            Spanned {
-                elem: Token::Op(s),
-                span,
-                column,
-            } => Spanned {
-                span,
-                elem: BINARY_OPERATOR_TABLE[s],
-                column,
-            },
-            _ => unreachable!(),
-        })
+    fn bin_op_or_rparen(&mut self) -> SpannedResult<'a, Operator<'a>> {
+        self.operator()
+            .or_else(|_| self.rparen())
+            .map(|v| match v {
+                Spanned {
+                    elem: Token::Op(s),
+                    span,
+                    column,
+                } if BINARY_OPERATOR_TABLE.contains_key(s) => Ok(Spanned {
+                    span,
+                    elem: BINARY_OPERATOR_TABLE[s],
+                    column,
+                }),
+                Spanned {
+                    elem: Token::Delimiter(Delimiter::RParen),
+                    span,
+                    column,
+                } => Ok(Spanned {
+                    span,
+                    elem: Operator {
+                        prec: 0,
+                        fixity: Fixity::None,
+                        sym: ")",
+                    },
+                    column,
+                }),
+                SpannedTok { span, elem, .. } => Err(ErrorInfo {
+                    span,
+                    expected: Some(Expected::Named("a binary operator")),
+                    error: Error::UnexpectedTok(elem),
+                }),
+            })?
     }
-    fn un_op(&mut self) -> Result<Spanned<Operator<'a>>, ErrorInfo<'a>> {
+    fn un_op(&mut self) -> SpannedResult<'a, Operator<'a>> {
         self.operator().map(|v| match v {
             Spanned {
                 span,
                 elem: Token::Op(s),
                 column,
-            } => Spanned {
+            } if UNARY_OPERATOR_TABLE.contains_key(s) => Ok(Spanned {
                 span,
                 elem: UNARY_OPERATOR_TABLE[s],
                 column,
-            },
-            _ => unreachable!(),
-        })
+            }),
+            SpannedTok { span, elem, .. } => Err(ErrorInfo {
+                span,
+                expected: Some(Expected::Named("an unary operator")),
+                error: Error::UnexpectedTok(elem),
+            }),
+        })?
     }
-    fn atom(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    fn push_atom(
+        &mut self,
+        ast_stack: &mut Vec<Spanned<Expr<'a>>>,
+        op_stack: &mut Vec<Spanned<Operator<'a>>>,
+    ) -> Result<(), ErrorInfo<'a>> {
+        while let Ok(op) = self.un_op() {
+            op_stack.push(op);
+        }
+        if let Ok(Spanned { span, column, .. }) = self.lparen() {
+            op_stack.push(Spanned {
+                span,
+                column,
+                elem: Operator {
+                    prec: 0,
+                    fixity: Fixity::None,
+                    sym: "(",
+                },
+            })
+        }
+        ast_stack.push(self.atom()?);
+        Ok(())
+    }
+    fn atom(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.num()
             .or_else(|_| self.bool())
             .map(|Spanned { span, elem, column }| match elem {
@@ -125,6 +186,7 @@ where
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fixity {
+    None,
     Prefix,
     Infix(Assoc),
 }
@@ -146,6 +208,9 @@ pub struct Operator<'a> {
     pub prec: u8,
 }
 impl<'a> Operator<'a> {
+    pub fn has_bigger_prec(&self, op: &Operator<'_>) -> bool {
+        self.prec > op.prec || (self.prec == op.prec && op.is_left_assoc())
+    }
     pub fn is_infix(&self) -> bool {
         self.fixity != Fixity::Prefix
     }
@@ -163,6 +228,7 @@ impl<'a> Operator<'a> {
                 },
                 ..self
             }),
+            Fixity::None => None,
         }
     }
     pub fn is_left_assoc(&self) -> bool {
@@ -177,11 +243,11 @@ impl<'a> TryFrom<Operator<'a>> for BinOp {
     fn try_from(op: Operator<'a>) -> Result<BinOp, ()> {
         Ok(match op.sym {
             "+" => match op.fixity {
-                Fixity::Prefix => return Err(()),
+                Fixity::Prefix | Fixity::None => return Err(()),
                 Fixity::Infix(_) => BinOp::Add,
             },
             "-" => match op.fixity {
-                Fixity::Prefix => return Err(()),
+                Fixity::Prefix | Fixity::None => return Err(()),
                 Fixity::Infix(_) => BinOp::Sub,
             },
             "*" => BinOp::Mul,
@@ -204,11 +270,11 @@ impl<'a> TryFrom<Operator<'a>> for UnOp {
         Ok(match op.sym {
             "+" => match op.fixity {
                 Fixity::Prefix => UnOp::Pos,
-                Fixity::Infix(_) => return Err(()),
+                Fixity::Infix(_) | Fixity::None => return Err(()),
             },
             "-" => match op.fixity {
                 Fixity::Prefix => UnOp::Neg,
-                Fixity::Infix(_) => return Err(()),
+                Fixity::Infix(_) | Fixity::None => return Err(()),
             },
             "!" => UnOp::Neg,
             _ => return Err(()),

@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-pub use crate::errors::err::{Error, SpannedErr};
+pub use crate::errors::err::Error;
 use std::ops::Range;
 
 pub type Span = Range<usize>;

@@ -1,5 +1,5 @@
 use crate::{
-    errors::err::{Error, ErrorInfo, Expected, ParseResult},
+    errors::err::{Error, ErrorInfo, Expected, SpannedResult},
     syntax::{
         ast::*,
         tokens::{Delimiter, Spanned, SpannedTok, Token},
@@ -9,7 +9,7 @@ use std::{iter::Peekable, ops::Range};
 
 macro_rules! token {
     ($name: ident, $p: pat, $expected: literal) => {
-        pub fn $name(&mut self) -> Result<SpannedTok<'a>, ErrorInfo<'a>> {
+        pub fn $name(&mut self) -> SpannedResult<'a, Token<'a>> {
             if let Some(Spanned { elem: $p, .. }) = self.peek() {
                 return Ok(self.next().unwrap());
             }
@@ -22,7 +22,6 @@ macro_rules! token {
         }
     };
 }
-
 pub struct Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
@@ -40,7 +39,7 @@ where
             tokens: tokens.peekable(),
         }
     }
-    pub(super) fn if_then_else(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub(super) fn if_then_else(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let if_ctx = self.if_()?.column;
         let condition = self.block(if_ctx)?;
         match self.then() {
@@ -103,7 +102,7 @@ where
             span: if_ctx..end,
         })
     }
-    pub fn block(&mut self, enclosing_ctx: usize) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    pub fn block(&mut self, enclosing_ctx: usize) -> SpannedResult<'a, Expr<'a>> {
         let (start, block_ctx, first_statement) = self
             .statement()
             .map(|v| (v.span.start, v.column, v))
@@ -146,18 +145,18 @@ where
             elem: Expr::Block { instructions },
         })
     }
-    fn expr(&mut self) -> Result<Spanned<Expr<'a>>, ErrorInfo<'a>> {
+    fn expr(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.shunting_yard()
     }
 
-    fn statement(&mut self) -> Result<Spanned<Statement<'a>>, ErrorInfo<'a>> {
+    fn statement(&mut self) -> SpannedResult<'a, Statement<'a>> {
         self.expr().map(|Spanned { span, elem, column }| Spanned {
             span,
             column,
             elem: Statement::StmtExpr(elem),
         })
     }
-    pub(super) fn function_call(&mut self) -> ParseResult<'a, Expr<'a>> {
+    pub(super) fn function_call(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let function = self.ident()?;
         let fun_ctx = function.column;
         let mut params = vec![];
@@ -202,7 +201,7 @@ where
             })
         }
     }
-    fn ident(&mut self) -> ParseResult<'a, Expr<'a>> {
+    fn ident(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.identifier()
             .map(|Spanned { span, elem, column }| match elem {
                 Token::Ident(i) => Spanned {
