@@ -9,8 +9,8 @@ macro_rules! many {
     ($name: ident, $predicate: expr, $token: path) => {
         pub fn $name(&mut self, start: usize) -> SpannedTok<'a> {
             let mut length = 1;
-            while let Some(_) = self.next_if($predicate) {
-                length += 1
+            while let Some(c) = self.next_if($predicate) {
+                length += c.len_utf8()
             }
             let span = start..start + length;
             let s = &self.source[span.clone()];
@@ -40,7 +40,7 @@ impl<'a> Lexer<'a> {
     }
     pub fn tokenize(mut self) -> Result<Vec<SpannedTok<'a>>, ErrorInfo<'a>> {
         let mut tokens = vec![];
-        let mut last_indent = None;
+        let mut last_was_newline = false;
         while let Some(char) = self.next() {
             match char {
                 c if c.is_ascii_digit() => tokens.push(self.num(self.byte_pos - 1)),
@@ -85,21 +85,20 @@ impl<'a> Lexer<'a> {
                 },
                 '\n' => {
                     self.last_newline = self.byte_pos;
+                    if last_was_newline {
+                        continue;
+                    }
                     if tokens.is_empty() {
                         continue;
                     }
-                    let mut counter = 1;
-                    while let Some(' ') = self.peek() {
-                        self.next();
-                        counter += 1;
-                    }
+                    while let Some(' ') = self.next_if(|c| c == ' ' || c == '\t') {}
                     if let Some(c) = self.peek() {
                         if *c == '\n' {
                             continue;
                         }
-                        last_indent = Some((counter, self.byte_pos - counter..self.byte_pos));
+                        last_was_newline = true;
+                        continue;
                     }
-                    continue;
                 }
                 ' ' | '\t' | '\r' => (),
                 _ => {
@@ -110,15 +109,15 @@ impl<'a> Lexer<'a> {
                     })
                 }
             }
-            if let Some((size, ref span)) = last_indent {
+            if last_was_newline {
                 let last_tok = tokens.pop().unwrap();
                 tokens.push(SpannedTok {
-                    column: self.byte_pos - self.last_newline - 1,
-                    elem: Token::Indent(size, Box::new(last_tok.clone())),
-                    span: span.clone(),
+                    column: 0,
+                    elem: Token::Newline(Box::new(last_tok.clone())),
+                    span: self.last_newline..self.last_newline,
                 });
                 tokens.push(last_tok);
-                last_indent = None;
+                last_was_newline = false;
             }
         }
         tokens.push(SpannedTok {
@@ -133,7 +132,14 @@ impl<'a> Lexer<'a> {
         let mut length = 0;
         loop {
             match self.next() {
-                Some('"') => break,
+                Some('"') => {
+                    self.next();
+                    break;
+                }
+                Some('\n') => {
+                    self.last_newline = self.byte_pos;
+                    length += 1;
+                }
                 Some(c) => length += c.len_utf8(),
                 None => {
                     return Err(ErrorInfo {
@@ -144,7 +150,6 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        self.next();
         let span = start - 1..start + length;
         return Ok(Spanned {
             column: self.byte_pos - length - self.last_newline,

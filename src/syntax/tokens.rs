@@ -37,8 +37,8 @@ pub enum Token<'a> {
 
     Delimiter(Delimiter),
 
-    Indent(usize, Box<Spanned<Token<'a>>>),
-
+    // Contains a token just after a newline
+    Newline(Box<Spanned<Token<'a>>>),
     EOF,
 }
 
