@@ -2,7 +2,7 @@ pub mod ast;
 pub mod lexer;
 mod operators;
 pub mod parser;
-mod shunting_yard;
+pub mod shunting_yard;
 pub mod tokens;
 
 pub use ast::*;

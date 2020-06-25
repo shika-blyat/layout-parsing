@@ -39,21 +39,6 @@ impl<'a> Operator<'a> {
         self.fixity == Fixity::Prefix
     }
 
-    pub fn into_prefix(self) -> Option<Self> {
-        match self.fixity {
-            Fixity::Prefix => Some(self),
-            Fixity::Infix(_) => Some(Self {
-                fixity: Fixity::Prefix,
-                prec: match self.sym {
-                    "+" | "-" => 25,
-                    _ => return None,
-                },
-                ..self
-            }),
-            Fixity::None => None,
-        }
-    }
-
     pub fn is_left_assoc(&self) -> bool {
         match self.fixity {
             Fixity::Infix(assoc) => assoc.is_left(),

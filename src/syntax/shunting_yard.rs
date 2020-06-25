@@ -13,15 +13,17 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
 {
+    // Some kind of custom shunting yard
     pub(super) fn shunting_yard(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let mut op_stack: Vec<Spanned<Operator<'_>>> = vec![];
         let mut ast_stack = vec![];
         self.push_atom(&mut ast_stack, &mut op_stack)?;
-        loop {
-            match self.bin_op_or_rparen() {
+        'outer: loop {
+            match self.bin_op_or_peek_rparen() {
                 Some(op) if op.elem.sym == ")" => loop {
                     match op_stack.last() {
                         Some(last_op) if last_op.elem.sym == "(" => {
+                            let _ = self.rparen();
                             op_stack.pop().unwrap();
                             break;
                         }
@@ -29,7 +31,7 @@ where
                             let op = op_stack.pop().unwrap();
                             Self::push_op(&mut ast_stack, op);
                         }
-                        _ => todo!("raise an error"),
+                        _ => break 'outer,
                     }
                 },
                 Some(op) => {
@@ -80,10 +82,21 @@ where
         }
     }
 
-    fn bin_op_or_rparen(&mut self) -> Option<Spanned<Operator<'a>>> {
+    fn bin_op_or_peek_rparen(&mut self) -> Option<Spanned<Operator<'a>>> {
         self.operator()
-            .or_else(|_| self.rparen())
             .ok()
+            .or_else(|| {
+                if let rparen
+                @
+                Some(Spanned {
+                    elem: Token::Delimiter(Delimiter::RParen),
+                    ..
+                }) = self.peek()
+                {
+                    return rparen.map(|v| v.clone());
+                }
+                None
+            })
             .map(|v| match v {
                 Spanned { elem, span, column } => Some(Spanned {
                     span,
@@ -133,7 +146,9 @@ where
                     fixity: Fixity::None,
                     sym: "(",
                 },
-            })
+            });
+            self.push_atom(ast_stack, op_stack)?;
+            return Ok(());
         }
         ast_stack.push(self.atom()?);
         Ok(())
@@ -157,5 +172,129 @@ where
             })
             .or_else(|_| self.if_then_else())
             .or_else(|_| self.function_call())
+    }
+}
+
+// TESTS
+
+mod test {
+    use crate::syntax::*;
+    use pretty_assertions::assert_eq;
+    #[test]
+    fn complex_operation() {
+        let code = "    (1 + 2) * +-(if True then 4 else 3) - 1";
+        let lexer = Lexer::new(code);
+        let mut parser = Parser::new(lexer.tokenize().unwrap().into_iter());
+        let result = parser.block(0).unwrap();
+        assert_eq!(
+            result,
+            Spanned {
+                span: 5..43,
+                column: 5,
+                elem: Expr::Block {
+                    instructions: vec![Spanned {
+                        span: 5..43,
+                        column: 5,
+                        elem: Statement::StmtExpr(Expr::Binary(
+                            BinOp::Sub,
+                            Spanned {
+                                span: 5..38,
+                                column: 5,
+                                elem: Box::new(Expr::Binary(
+                                    BinOp::Mul,
+                                    Spanned {
+                                        span: 5..10,
+                                        column: 5,
+                                        elem: Box::new(Expr::Binary(
+                                            BinOp::Add,
+                                            Spanned {
+                                                elem: Box::new(Expr::Literal(Literal::Num("1"))),
+                                                span: 5..6,
+                                                column: 5
+                                            },
+                                            Spanned {
+                                                elem: Box::new(Expr::Literal(Literal::Num("2"))),
+                                                span: 9..10,
+                                                column: 9
+                                            }
+                                        )),
+                                    },
+                                    Spanned {
+                                        span: 14..38,
+                                        column: 14,
+                                        elem: Box::new(Expr::Unary(
+                                            UnOp::Pos,
+                                            Spanned {
+                                                span: 15..38,
+                                                column: 15,
+                                                elem: Box::new(Expr::Unary(
+                                                    UnOp::Neg,
+                                                    Spanned {
+                                                        span: 17..38,
+                                                        column: 17,
+                                                        elem: Box::new(Expr::IfThenElse {
+                                                            condition: Spanned {
+                                                                span: 20..24,
+                                                                column: 20,
+                                                                elem: Box::new(Expr::Block {
+                                                                    instructions: vec![Spanned {
+                                                                        span: 20..24,
+                                                                        column: 20,
+                                                                        elem: Statement::StmtExpr(
+                                                                            Expr::Literal(
+                                                                                Literal::Bool(true)
+                                                                            )
+                                                                        ),
+                                                                    }]
+                                                                })
+                                                            },
+                                                            then_arm: Spanned {
+                                                                span: 30..31,
+                                                                column: 30,
+                                                                elem: Box::new(Expr::Block {
+                                                                    instructions: vec![Spanned {
+                                                                        span: 30..31,
+                                                                        column: 30,
+                                                                        elem: Statement::StmtExpr(
+                                                                            Expr::Literal(
+                                                                                Literal::Num("4")
+                                                                            )
+                                                                        ),
+                                                                    }]
+                                                                })
+                                                            },
+                                                            else_arm: Some(Spanned {
+                                                                span: 37..38,
+                                                                column: 37,
+                                                                elem: Box::new(Expr::Block {
+                                                                    instructions: vec![Spanned {
+                                                                        span: 37..38,
+                                                                        column: 37,
+                                                                        elem: Statement::StmtExpr(
+                                                                            Expr::Literal(
+                                                                                Literal::Num("3")
+                                                                            )
+                                                                        ),
+                                                                    }]
+                                                                })
+                                                            })
+                                                        }),
+                                                    }
+                                                ))
+                                            }
+                                        ))
+                                    }
+                                )),
+                            },
+                            Spanned {
+                                elem: Box::new(Expr::Literal(Literal::Num("1"))),
+                                span: 42..43,
+                                column: 42,
+                            }
+                        ))
+                    }]
+                }
+            }
+        )
     }
 }

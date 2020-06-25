@@ -244,7 +244,7 @@ where
         v
     }
 
-    fn peek(&mut self) -> Option<&SpannedTok<'a>> {
+    pub(super) fn peek(&mut self) -> Option<&SpannedTok<'a>> {
         self.tokens.peek()
     }
 

@@ -15,15 +15,10 @@ fn main() {
             else 4
     a = 2
     ";
-  let code2 = "
-    if True
-    then 4
-         2
-    else if True then 2 
-         else (4 + -2) * 2
-    15
-";
-  let lexer = Lexer::new(code2);
+  let code = "
+    (1 + 2) * +-(if True then 4 else 3) - 1
+    ";
+  let lexer = Lexer::new(code);
   let tokens = lexer.tokenize();
   println!("{:#?}", tokens);
   let mut parser = Parser::new(tokens.unwrap().into_iter());
