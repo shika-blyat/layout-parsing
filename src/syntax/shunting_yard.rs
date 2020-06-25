@@ -13,142 +13,117 @@ impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
 {
-    #[allow(unused)]
     pub(super) fn shunting_yard(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let mut op_stack: Vec<Spanned<Operator<'_>>> = vec![];
         let mut ast_stack = vec![];
         self.push_atom(&mut ast_stack, &mut op_stack)?;
         loop {
             match self.bin_op_or_rparen() {
-                Ok(op) if op.elem.sym == ")" => {
-                    loop {
-                        match op_stack.last() {
-                            Some(last_op) if last_op.elem.sym == "(" => {
-                                op_stack.pop().unwrap();
-                                break;
-                            }
-                            Some(last_op) if last_op.elem.is_infix() => {
-                                let op = op_stack.pop().unwrap();
-                                Self::push_infix(&mut ast_stack, op);
-                            }
-                            Some(last_op) if last_op.elem.is_prefix() => {
-                                let op = op_stack.pop().unwrap();
-                                Self::push_prefix(&mut ast_stack, op);
-                            }
-                            _ => todo!("raise an error"),
+                Some(op) if op.elem.sym == ")" => loop {
+                    match op_stack.last() {
+                        Some(last_op) if last_op.elem.sym == "(" => {
+                            op_stack.pop().unwrap();
+                            break;
                         }
+                        Some(last_op) if last_op.elem.is_infix() || last_op.elem.is_prefix() => {
+                            let op = op_stack.pop().unwrap();
+                            Self::push_op(&mut ast_stack, op);
+                        }
+                        _ => todo!("raise an error"),
                     }
-                    continue;
-                }
-                Ok(op) => {
+                },
+                Some(op) => {
                     loop {
                         match op_stack.last() {
                             Some(last_op)
-                                if last_op.elem.is_infix()
-                                    && last_op.elem.has_bigger_prec(&op.elem) =>
+                                if (last_op.elem.is_infix()
+                                    && last_op.elem.has_bigger_prec(&op.elem))
+                                    || last_op.elem.is_prefix() =>
                             {
                                 let op = op_stack.pop().unwrap();
-                                Self::push_infix(&mut ast_stack, op);
-                            }
-                            Some(last_op) if last_op.elem.is_prefix() => {
-                                let op = op_stack.pop().unwrap();
-                                Self::push_prefix(&mut ast_stack, op);
+                                Self::push_op(&mut ast_stack, op);
                             }
                             _ => break,
                         }
                     }
-                    op_stack.push(op)
+                    op_stack.push(op);
+                    self.push_atom(&mut ast_stack, &mut op_stack)?;
                 }
                 _ => break,
             }
-            self.push_atom(&mut ast_stack, &mut op_stack)?;
         }
         for op in op_stack.into_iter().rev() {
-            if op.elem.is_infix() {
-                Self::push_infix(&mut ast_stack, op);
-            } else if op.elem.is_prefix() {
-                Self::push_prefix(&mut ast_stack, op);
+            if op.elem.is_infix() || op.elem.is_prefix() {
+                Self::push_op(&mut ast_stack, op);
             }
         }
         return Ok(ast_stack.into_iter().next().unwrap());
     }
-    fn push_infix(ast: &mut Vec<Spanned<Expr<'a>>>, op: Spanned<Operator<'a>>) {
+
+    fn push_op(ast: &mut Vec<Spanned<Expr<'a>>>, op: Spanned<Operator<'a>>) {
         let right = ast.pop().unwrap();
-        let left = ast.pop().unwrap();
-        ast.push(Spanned {
-            span: left.span.start..right.span.end,
-            column: left.column,
-            elem: Expr::Binary(op.elem.try_into().unwrap(), left.into(), right.into()),
-        })
+        match op.elem.fixity {
+            Fixity::Infix(_) => {
+                let left = ast.pop().unwrap();
+                ast.push(Spanned {
+                    span: left.span.start..right.span.end,
+                    column: left.column,
+                    elem: Expr::Binary(op.elem.try_into().unwrap(), left.into(), right.into()),
+                })
+            }
+            Fixity::Prefix => ast.push(Spanned {
+                span: op.span.start..right.span.end,
+                column: op.column,
+                elem: Expr::Unary(op.elem.try_into().unwrap(), right.into()),
+            }),
+            Fixity::None => unreachable!(),
+        }
     }
 
-    fn push_prefix(ast: &mut Vec<Spanned<Expr<'a>>>, op: Spanned<Operator<'a>>) {
-        let right = ast.pop().unwrap();
-        ast.push(Spanned {
-            span: op.span.start..right.span.end,
-            column: op.column,
-            elem: Expr::Unary(op.elem.try_into().unwrap(), right.into()),
-        })
-    }
-    fn bin_op_or_rparen(&mut self) -> SpannedResult<'a, Operator<'a>> {
+    fn bin_op_or_rparen(&mut self) -> Option<Spanned<Operator<'a>>> {
         self.operator()
             .or_else(|_| self.rparen())
+            .ok()
             .map(|v| match v {
-                Spanned {
-                    elem: Token::Op(s),
+                Spanned { elem, span, column } => Some(Spanned {
                     span,
-                    column,
-                } if BINARY_OPERATOR_TABLE.contains_key(s) => Ok(Spanned {
-                    span,
-                    elem: BINARY_OPERATOR_TABLE[s],
-                    column,
-                }),
-                Spanned {
-                    elem: Token::Delimiter(Delimiter::RParen),
-                    span,
-                    column,
-                } => Ok(Spanned {
-                    span,
-                    elem: Operator {
-                        prec: 0,
-                        fixity: Fixity::None,
-                        sym: ")",
+                    elem: match elem {
+                        Token::Op(s) => *BINARY_OPERATOR_TABLE.get(s)?,
+                        Token::Delimiter(Delimiter::RParen) => Operator {
+                            prec: 0,
+                            fixity: Fixity::None,
+                            sym: ")",
+                        },
+                        _ => unreachable!(),
                     },
                     column,
                 }),
-                SpannedTok { span, elem, .. } => Err(ErrorInfo {
-                    span,
-                    expected: Some(Expected::Named("a binary operator")),
-                    error: Error::UnexpectedTok(elem),
-                }),
             })?
     }
-    fn un_op(&mut self) -> SpannedResult<'a, Operator<'a>> {
-        self.operator().map(|v| match v {
-            Spanned {
+
+    fn un_op(&mut self) -> Option<Spanned<Operator<'a>>> {
+        let v = self.operator().ok()?;
+        if let Spanned {
+            span,
+            elem: Token::Op(s),
+            column,
+        } = v
+        {
+            return Some(Spanned {
                 span,
-                elem: Token::Op(s),
+                elem: *UNARY_OPERATOR_TABLE.get(s)?,
                 column,
-            } if UNARY_OPERATOR_TABLE.contains_key(s) => Ok(Spanned {
-                span,
-                elem: UNARY_OPERATOR_TABLE[s],
-                column,
-            }),
-            SpannedTok { span, elem, .. } => Err(ErrorInfo {
-                span,
-                expected: Some(Expected::Named("an unary operator")),
-                error: Error::UnexpectedTok(elem),
-            }),
-        })?
+            });
+        }
+        unreachable!()
     }
+
     fn push_atom(
         &mut self,
         ast_stack: &mut Vec<Spanned<Expr<'a>>>,
         op_stack: &mut Vec<Spanned<Operator<'a>>>,
     ) -> Result<(), ErrorInfo<'a>> {
-        while let Ok(op) = self.un_op() {
-            op_stack.push(op);
-        }
+        op_stack.extend(std::iter::from_fn(|| self.un_op()));
         if let Ok(Spanned { span, column, .. }) = self.lparen() {
             op_stack.push(Spanned {
                 span,
@@ -163,6 +138,7 @@ where
         ast_stack.push(self.atom()?);
         Ok(())
     }
+
     fn atom(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.num()
             .or_else(|_| self.bool())
@@ -211,12 +187,15 @@ impl<'a> Operator<'a> {
     pub fn has_bigger_prec(&self, op: &Operator<'_>) -> bool {
         self.prec > op.prec || (self.prec == op.prec && op.is_left_assoc())
     }
+
     pub fn is_infix(&self) -> bool {
         self.fixity != Fixity::Prefix
     }
+
     pub fn is_prefix(&self) -> bool {
         self.fixity == Fixity::Prefix
     }
+
     pub fn into_prefix(self) -> Option<Self> {
         match self.fixity {
             Fixity::Prefix => Some(self),
@@ -231,6 +210,7 @@ impl<'a> Operator<'a> {
             Fixity::None => None,
         }
     }
+
     pub fn is_left_assoc(&self) -> bool {
         match self.fixity {
             Fixity::Infix(assoc) => assoc.is_left(),
