@@ -39,6 +39,89 @@ where
             tokens: tokens.peekable(),
         }
     }
+    pub fn module(&mut self) -> Result<Module<'a>, ErrorInfo<'a>> {
+        let items = std::iter::from_fn(|| self.item(0).ok()).collect();
+        Ok(Module { items })
+    }
+    fn item(&mut self, ctx: usize) -> SpannedResult<'a, Item<'a>> {
+        self.function_decl(ctx)
+            .map(|Spanned { elem, span, column }| Spanned {
+                span,
+                column,
+                elem: Item::Function(elem),
+            })
+    }
+    pub fn function_decl(&mut self, ctx: usize) -> SpannedResult<'a, FunctionDecl<'a>> {
+        let name = self.ident_string()?;
+        let arguments = std::iter::from_fn(|| self.pattern().ok()).collect();
+        self.equal()?;
+        let body = self.block(ctx)?;
+        Ok(Spanned {
+            span: name.span.start..body.span.end,
+            column: name.column,
+            elem: FunctionDecl {
+                name,
+                arguments,
+                body,
+            },
+        })
+    }
+    fn pattern(&mut self) -> SpannedResult<'a, Pattern<'a>> {
+        self.ident_string()
+            .map(|Spanned { elem, span, column }| Spanned {
+                elem: Pattern::Named(elem),
+                span,
+                column,
+            })
+    }
+    pub(super) fn block(&mut self, enclosing_ctx: usize) -> SpannedResult<'a, Expr<'a>> {
+        let (start, block_ctx, first_statement) = self
+            .statement()
+            .map(|v| (v.span.start, v.column, v))
+            .or_else(|_| {
+                if let Some(SpannedTok {
+                    elem: Token::Newline(box Spanned { column, .. }),
+                    span,
+                    ..
+                }) = self.newline()
+                {
+                    if column > enclosing_ctx {
+                        return Ok((span.start, column, self.statement()?));
+                    }
+                }
+                let (span, error) = self.next_or_eof();
+                return Err(ErrorInfo {
+                    expected: Some(Expected::Named("An expression")),
+                    error,
+                    span,
+                });
+            })?;
+        let mut instructions = vec![first_statement];
+        loop {
+            match self.peek() {
+                Some(SpannedTok {
+                    elem: Token::Newline(box Spanned { column, .. }),
+                    span,
+                    ..
+                }) if *column == block_ctx => {
+                    self.next();
+                    instructions.push(self.statement()?);
+                }
+                _ => break,
+            }
+        }
+        let end = instructions.last().unwrap().span.end;
+        Ok(Spanned {
+            span: start..end,
+            column: block_ctx,
+            elem: Expr::Block { instructions },
+        })
+    }
+
+    fn expr(&mut self) -> SpannedResult<'a, Expr<'a>> {
+        self.shunting_yard()
+    }
+
     pub(super) fn if_then_else(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let if_ctx = self.if_()?.column;
         let condition = self.block(if_ctx)?;
@@ -102,67 +185,14 @@ where
             span: if_ctx..end,
         })
     }
-    pub fn block(&mut self, enclosing_ctx: usize) -> SpannedResult<'a, Expr<'a>> {
-        let (start, block_ctx, first_statement) = self
-            .statement()
-            .map(|v| (v.span.start, v.column, v))
-            .or_else(|_| {
-                if let Some(SpannedTok {
-                    elem: Token::Newline(box Spanned { column, .. }),
-                    span,
-                    ..
-                }) = self.newline()
-                {
-                    if column > enclosing_ctx {
-                        return Ok((span.start, column, self.statement()?));
-                    }
-                }
-                let (span, error) = self.next_or_eof();
-                return Err(ErrorInfo {
-                    expected: Some(Expected::Named("An expression")),
-                    error,
-                    span,
-                });
-            })?;
-        let mut instructions = vec![first_statement];
-        loop {
-            match self.peek() {
-                Some(SpannedTok {
-                    elem: Token::Newline(box Spanned { column, .. }),
-                    span,
-                    ..
-                }) if *column == block_ctx => {
-                    self.next();
-                    instructions.push(self.statement()?);
-                }
-                _ => break,
-            }
-        }
-        let end = instructions.last().unwrap().span.end;
-        Ok(Spanned {
-            span: start..end,
-            column: block_ctx,
-            elem: Expr::Block { instructions },
-        })
-    }
-    fn expr(&mut self) -> SpannedResult<'a, Expr<'a>> {
-        self.shunting_yard()
-    }
 
-    fn statement(&mut self) -> SpannedResult<'a, Statement<'a>> {
-        self.expr().map(|Spanned { span, elem, column }| Spanned {
-            span,
-            column,
-            elem: Statement::StmtExpr(elem),
-        })
-    }
     pub(super) fn function_call(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let function = self.ident()?;
         let fun_ctx = function.column;
         let mut params = vec![];
         let mut sub_ctx = None;
         loop {
-            match self.expr() {
+            match self.argument() {
                 Ok(v) => params.push(v),
                 _ => match self.peek() {
                     Some(Spanned {
@@ -172,7 +202,7 @@ where
                     }) if *column > fun_ctx => match sub_ctx {
                         Some(level) if level == *column => {
                             self.next();
-                            params.push(self.expr()?);
+                            params.push(self.argument()?);
                         }
                         Some(_) => {
                             return Err(ErrorInfo {
@@ -184,7 +214,7 @@ where
                         None => {
                             sub_ctx = Some(*column);
                             self.next();
-                            params.push(self.expr()?);
+                            params.push(self.argument()?);
                         }
                     },
                     _ => break,
@@ -201,8 +231,16 @@ where
             })
         }
     }
+    fn argument(&mut self) -> SpannedResult<'a, Expr<'a>> {
+        self.literal().or_else(|_| {
+            self.lparen()?;
+            let expr = self.expr()?;
+            self.rparen()?;
+            Ok(expr)
+        })
+    }
     fn ident(&mut self) -> SpannedResult<'a, Expr<'a>> {
-        self.identifier()
+        self.ident_token()
             .map(|Spanned { span, elem, column }| match elem {
                 Token::Ident(i) => Spanned {
                     elem: Expr::Ident(Spanned {
@@ -216,6 +254,59 @@ where
                 _ => unreachable!(),
             })
     }
+
+    fn statement(&mut self) -> SpannedResult<'a, Statement<'a>> {
+        self.expr()
+            .map(|Spanned { span, elem, column }| Spanned {
+                span,
+                column,
+                elem: Statement::StmtExpr(elem),
+            })
+            .or_else(|_| self.let_decl())
+    }
+
+    fn let_decl(&mut self) -> SpannedResult<'a, Statement<'a>> {
+        let let_ = self.let_()?;
+        let name = self.ident_string()?;
+        self.equal()?;
+        let value = self.expr()?;
+        let end = value.span.end;
+        Ok(Spanned {
+            span: let_.span.start..end,
+            column: let_.column,
+            elem: Statement::Assignment(name, value),
+        })
+    }
+    pub(super) fn literal(&mut self) -> SpannedResult<'a, Expr<'a>> {
+        self.num()
+            .or_else(|_| self.bool())
+            .map(|Spanned { span, elem, column }| match elem {
+                Token::Num(n) => Spanned {
+                    elem: Expr::Literal(Literal::Num(n)),
+                    column,
+                    span,
+                },
+                Token::Bool(b) => Spanned {
+                    elem: Expr::Literal(Literal::Bool(b)),
+                    column,
+                    span,
+                },
+                _ => unreachable!(),
+            })
+    }
+
+    fn ident_string(&mut self) -> SpannedResult<'a, Ident<'a>> {
+        self.ident_token()
+            .map(|Spanned { elem, span, column }| Spanned {
+                span,
+                column,
+                elem: match elem {
+                    Token::Ident(s) => s,
+                    _ => unreachable!(),
+                },
+            })
+    }
+
     fn newline(&mut self) -> Option<SpannedTok<'a>> {
         if let Some(Spanned {
             elem: Token::Newline(_),
@@ -239,6 +330,7 @@ where
             _ => unreachable!(),
         }
     }
+
     fn next(&mut self) -> Option<SpannedTok<'a>> {
         let v = self.tokens.next();
         v
@@ -260,11 +352,13 @@ where
     );
     token!(lbrace, Token::Delimiter(Delimiter::LBrace), "left brace");
     token!(rbrace, Token::Delimiter(Delimiter::RBrace), "right brace");
+    token!(equal, Token::Equal, "equal token");
     token!(if_, Token::If, "if token");
     token!(then, Token::Then, "then token");
     token!(else_, Token::Else, "else token");
+    token!(let_, Token::Let, "let token");
     token!(num, Token::Num(_), "number");
-    token!(identifier, Token::Ident(_), "identifier");
+    token!(ident_token, Token::Ident(_), "identifier");
     token!(bool, Token::Bool(_), "boolean");
     token!(operator, Token::Op(_), "operator");
 }

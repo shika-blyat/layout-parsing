@@ -5,22 +5,22 @@ mod syntax;
 use syntax::{Lexer, Parser};
 
 fn main() {
-  let _code1 = "
-    foo = 2
+  let code1 = "
+foo a b = 
+          let a = foo a (1 + 2)
+                    (bar 18)
+                    (baz 15 12)
           if True
           then 4
           else
             if True
             then 2
             else 4
-    a = 2
+foo a b = 2
     ";
-  let code = "
-    (1 + 2) * +-(if True then 4 else 3) - 1
-    ";
-  let lexer = Lexer::new(code);
+  let lexer = Lexer::new(code1);
   let tokens = lexer.tokenize();
   println!("{:#?}", tokens);
   let mut parser = Parser::new(tokens.unwrap().into_iter());
-  println!("{:#?}", parser.block(0));
+  println!("{:#?}", parser.function_decl(0));
 }

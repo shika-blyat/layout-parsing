@@ -8,12 +8,12 @@ use crate::{
     },
 };
 use std::convert::TryInto;
-
 impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
 {
-    // Some kind of custom shunting yard
+    // Some kind of revisited shunting yard
+    // There's a fairly high probability I forgot something and the parser will break with no apparent reason
     pub(super) fn shunting_yard(&mut self) -> SpannedResult<'a, Expr<'a>> {
         let mut op_stack: Vec<Spanned<Operator<'_>>> = vec![];
         let mut ast_stack = vec![];
@@ -155,21 +155,7 @@ where
     }
 
     fn atom(&mut self) -> SpannedResult<'a, Expr<'a>> {
-        self.num()
-            .or_else(|_| self.bool())
-            .map(|Spanned { span, elem, column }| match elem {
-                Token::Num(n) => Spanned {
-                    elem: Expr::Literal(Literal::Num(n)),
-                    column,
-                    span,
-                },
-                Token::Bool(b) => Spanned {
-                    elem: Expr::Literal(Literal::Bool(b)),
-                    column,
-                    span,
-                },
-                _ => unreachable!(),
-            })
+        self.literal()
             .or_else(|_| self.if_then_else())
             .or_else(|_| self.function_call())
     }

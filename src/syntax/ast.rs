@@ -4,14 +4,26 @@ use super::tokens::Spanned;
 pub type BoxSpanned<T> = Spanned<Box<T>>;
 pub type Ident<'a> = &'a str;
 
-impl<T> From<Spanned<T>> for Spanned<Box<T>> {
-    fn from(b: Spanned<T>) -> Spanned<Box<T>> {
-        Spanned {
-            elem: Box::new(b.elem),
-            span: b.span,
-            column: b.column,
-        }
-    }
+#[derive(Debug, PartialEq, Clone)]
+pub struct Module<'a> {
+    pub items: Vec<Spanned<Item<'a>>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Item<'a> {
+    Function(FunctionDecl<'a>),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionDecl<'a> {
+    pub name: Spanned<Ident<'a>>,
+    pub arguments: Vec<Spanned<Pattern<'a>>>,
+    pub body: Spanned<Expr<'a>>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Pattern<'a> {
+    Named(Ident<'a>),
 }
 
 #[allow(unused)]
@@ -38,7 +50,7 @@ pub enum Expr<'a> {
 pub enum Statement<'a> {
     Return(Expr<'a>),
     Continue,
-    Assignment(Ident<'a>, Expr<'a>),
+    Assignment(Spanned<Ident<'a>>, Spanned<Expr<'a>>),
     Break(Expr<'a>),
     StmtExpr(Expr<'a>),
 }

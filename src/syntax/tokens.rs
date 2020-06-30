@@ -12,6 +12,16 @@ pub struct Spanned<T> {
     pub elem: T,
 }
 
+impl<T> From<Spanned<T>> for Spanned<Box<T>> {
+    fn from(b: Spanned<T>) -> Spanned<Box<T>> {
+        Spanned {
+            elem: Box::new(b.elem),
+            span: b.span,
+            column: b.column,
+        }
+    }
+}
+
 pub type SpannedTok<'a> = Spanned<Token<'a>>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +41,8 @@ pub enum Token<'a> {
 
     Then,
 
+    Let,
+
     Else,
 
     Equal,
@@ -48,6 +60,7 @@ impl<'a> TryFrom<&'a str> for Token<'a> {
         Ok(match value {
             "=" => Token::Equal,
             "if" => Token::If,
+            "let" => Token::Let,
             "then" => Token::Then,
             "else" => Token::Else,
             "True" => Token::Bool(true),

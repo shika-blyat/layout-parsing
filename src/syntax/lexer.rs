@@ -60,11 +60,14 @@ impl<'a> Lexer<'a> {
                             span: self.byte_pos - 1..self.byte_pos + 1,
                         })
                     }
-                    _ => tokens.push(SpannedTok {
-                        column: self.byte_pos - self.last_newline - 1,
-                        elem: Token::Op(&self.source[self.byte_pos - 1..self.byte_pos]),
-                        span: self.byte_pos - 1..self.byte_pos,
-                    }),
+                    _ => {
+                        let source = &self.source[self.byte_pos - 1..self.byte_pos];
+                        tokens.push(SpannedTok {
+                            column: self.byte_pos - self.last_newline - 1,
+                            elem: Token::try_from(source).unwrap_or(Token::Op(source)),
+                            span: self.byte_pos - 1..self.byte_pos,
+                        })
+                    }
                 },
                 '&' | '|' => match self.peek() {
                     Some(c) if c == &char => {
