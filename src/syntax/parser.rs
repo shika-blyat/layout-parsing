@@ -232,12 +232,13 @@ where
         }
     }
     fn argument(&mut self) -> SpannedResult<'a, Expr<'a>> {
-        self.literal().or_else(|_| {
-            self.lparen()?;
-            let expr = self.expr()?;
-            self.rparen()?;
-            Ok(expr)
-        })
+        self.literal().or_else(|_| self.parenthesized())
+    }
+    fn parenthesized(&mut self) -> SpannedResult<'a, Expr<'a>> {
+        self.lparen()?;
+        let expr = self.expr()?;
+        self.rparen()?;
+        Ok(expr)
     }
     fn ident(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.ident_token()
@@ -279,10 +280,20 @@ where
     }
     pub(super) fn literal(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.num()
+            .or_else(|_| self.ident_token())
             .or_else(|_| self.bool())
             .map(|Spanned { span, elem, column }| match elem {
                 Token::Num(n) => Spanned {
                     elem: Expr::Literal(Literal::Num(n)),
+                    column,
+                    span,
+                },
+                Token::Ident(s) => Spanned {
+                    elem: Expr::Ident(Spanned {
+                        span: span.clone(),
+                        column,
+                        elem: s,
+                    }),
                     column,
                     span,
                 },

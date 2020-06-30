@@ -155,9 +155,9 @@ where
     }
 
     fn atom(&mut self) -> SpannedResult<'a, Expr<'a>> {
-        self.literal()
+        self.function_call()
             .or_else(|_| self.if_then_else())
-            .or_else(|_| self.function_call())
+            .or_else(|_| self.literal())
     }
 }
 
