@@ -76,6 +76,14 @@ where
                 span,
                 column,
             })
+            .or_else(|_| {
+                self.placeholder()
+                    .map(|Spanned { span, column, .. }| Spanned {
+                        elem: Pattern::Named("_"),
+                        span,
+                        column,
+                    })
+            })
     }
 
     pub(super) fn block(&mut self, enclosing_ctx: usize) -> SpannedResult<'a, Expr<'a>> {
@@ -361,6 +369,7 @@ where
         self.tokens.peek()
     }
 
+    token!(placeholder, Token::Placeholder, "placeholder token");
     token!(
         lparen,
         Token::Delimiter(Delimiter::LParen),
