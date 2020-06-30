@@ -37,6 +37,8 @@ pub enum Token<'a> {
 
     Bool(bool),
 
+    Unit,
+
     If,
 
     Then,
@@ -65,7 +67,7 @@ impl<'a> TryFrom<&'a str> for Token<'a> {
             "else" => Token::Else,
             "True" => Token::Bool(true),
             "False" => Token::Bool(false),
-            "(" | ")" | "{" | "}" => {
+            "(" | ")" => {
                 Token::Delimiter(Delimiter::try_from(value.chars().next().unwrap()).unwrap())
             }
             "+" | "-" | "*" | "/" | "!" | "==" | "!=" | "&&" | "||" => Token::Op(value),
@@ -77,8 +79,6 @@ impl<'a> TryFrom<&'a str> for Token<'a> {
 pub enum Delimiter {
     LParen,
     RParen,
-    LBrace,
-    RBrace,
 }
 impl TryFrom<char> for Delimiter {
     type Error = ();
@@ -86,8 +86,6 @@ impl TryFrom<char> for Delimiter {
         Ok(match value {
             '(' => Delimiter::LParen,
             ')' => Delimiter::RParen,
-            '{' => Delimiter::LBrace,
-            '}' => Delimiter::RBrace,
             _ => return Err(()),
         })
     }

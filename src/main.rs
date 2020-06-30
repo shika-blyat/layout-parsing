@@ -5,6 +5,7 @@ mod syntax;
 use syntax::{Lexer, Parser};
 
 fn main() {
+  // doesnt work yet
   let code1 = "
 foo a b = 
           let a = foo a (1 + 2)
@@ -22,5 +23,5 @@ foo a b = 2
   let tokens = lexer.tokenize();
   println!("{:#?}", tokens);
   let mut parser = Parser::new(tokens.unwrap().into_iter());
-  println!("{:#?}", parser.function_decl(0));
+  println!("{:#?}", parser.module());
 }

@@ -46,7 +46,23 @@ impl<'a> Lexer<'a> {
                 c if c.is_ascii_digit() => tokens.push(self.num(self.byte_pos - 1)),
                 c if c.is_alphabetic() => tokens.push(self.ident(self.byte_pos - 1)),
                 '"' => tokens.push(self.string(self.byte_pos)?),
-                '(' | ')' | '{' | '}' | '+' | '-' | '*' | '/' => tokens.push(SpannedTok {
+                '(' => match self.peek() {
+                    Some(')') => {
+                        self.next();
+                        tokens.push(SpannedTok {
+                            column: self.byte_pos - self.last_newline - 2,
+                            elem: Token::Unit,
+                            span: self.byte_pos - 1..self.byte_pos + 1,
+                        })
+                    }
+                    _ => tokens.push(SpannedTok {
+                        column: self.byte_pos - self.last_newline - 1,
+                        span: self.byte_pos - 1..self.byte_pos,
+                        elem: Token::try_from(&self.source[self.byte_pos - 1..self.byte_pos])
+                            .unwrap(),
+                    }),
+                },
+                ')' | '+' | '-' | '*' | '/' => tokens.push(SpannedTok {
                     column: self.byte_pos - self.last_newline - 1,
                     span: self.byte_pos - 1..self.byte_pos,
                     elem: Token::try_from(&self.source[self.byte_pos - 1..self.byte_pos]).unwrap(),

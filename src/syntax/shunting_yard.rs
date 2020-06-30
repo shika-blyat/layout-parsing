@@ -1,7 +1,7 @@
 use crate::{
     errors::err::*,
     syntax::{
-        ast::{Expr, Literal},
+        ast::Expr,
         operators::{Fixity, Operator, BINARY_OPERATOR_TABLE, UNARY_OPERATOR_TABLE},
         parser::Parser,
         tokens::{Delimiter, Spanned, SpannedTok, Token},
@@ -162,7 +162,7 @@ where
 }
 
 // TESTS
-
+#[allow(unused)]
 mod test {
     use crate::syntax::*;
     use pretty_assertions::assert_eq;

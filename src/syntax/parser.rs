@@ -29,7 +29,6 @@ where
     pub(super) tokens: Peekable<I>,
 }
 
-#[allow(unused)]
 impl<'a, I> Parser<'a, I>
 where
     I: Iterator<Item = SpannedTok<'a>>,
@@ -106,7 +105,6 @@ where
             match self.peek() {
                 Some(SpannedTok {
                     elem: Token::Newline(box Spanned { column, .. }),
-                    span,
                     ..
                 }) if *column == block_ctx => {
                     self.next();
@@ -134,7 +132,6 @@ where
             Ok(_) => (),
             Err(_) => match self.newline() {
                 Some(Spanned {
-                    span,
                     elem:
                         Token::Newline(box Spanned {
                             elem: Token::Then,
@@ -160,7 +157,6 @@ where
             Ok(_) => Some(self.block(if_ctx)?),
             _ => match self.newline() {
                 Some(Spanned {
-                    span,
                     elem:
                         Token::Newline(box Spanned {
                             elem: Token::Else,
@@ -329,7 +325,6 @@ where
     fn newline(&mut self) -> Option<SpannedTok<'a>> {
         if let Some(Spanned {
             elem: Token::Newline(_),
-            span,
             ..
         }) = self.peek()
         {
@@ -369,8 +364,6 @@ where
         Token::Delimiter(Delimiter::RParen),
         "right parenthesis"
     );
-    token!(lbrace, Token::Delimiter(Delimiter::LBrace), "left brace");
-    token!(rbrace, Token::Delimiter(Delimiter::RBrace), "right brace");
     token!(equal, Token::Equal, "equal token");
     token!(if_, Token::If, "if token");
     token!(then, Token::Then, "then token");
