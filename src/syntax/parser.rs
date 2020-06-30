@@ -243,6 +243,7 @@ where
         self.rparen()?;
         Ok(expr)
     }
+
     fn ident(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.ident_token()
             .map(|Spanned { span, elem, column }| match elem {
@@ -286,9 +287,20 @@ where
         self.num()
             .or_else(|_| self.ident_token())
             .or_else(|_| self.bool())
+            .or_else(|_| self.string())
             .map(|Spanned { span, elem, column }| match elem {
                 Token::Num(n) => Spanned {
                     elem: Expr::Literal(Literal::Num(n)),
+                    column,
+                    span,
+                },
+                Token::Bool(b) => Spanned {
+                    elem: Expr::Literal(Literal::Bool(b)),
+                    column,
+                    span,
+                },
+                Token::Str(s) => Spanned {
+                    elem: Expr::Literal(Literal::Str(s)),
                     column,
                     span,
                 },
@@ -298,11 +310,6 @@ where
                         column,
                         elem: s,
                     }),
-                    column,
-                    span,
-                },
-                Token::Bool(b) => Spanned {
-                    elem: Expr::Literal(Literal::Bool(b)),
                     column,
                     span,
                 },
@@ -370,6 +377,7 @@ where
     token!(else_, Token::Else, "else token");
     token!(let_, Token::Let, "let token");
     token!(num, Token::Num(_), "number");
+    token!(string, Token::Str(_), "string");
     token!(ident_token, Token::Ident(_), "identifier");
     token!(bool, Token::Bool(_), "boolean");
     token!(operator, Token::Op(_), "operator");

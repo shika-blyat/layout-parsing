@@ -45,6 +45,14 @@ impl<'a> Lexer<'a> {
             match char {
                 c if c.is_ascii_digit() => tokens.push(self.num(self.byte_pos - 1)),
                 c if c.is_alphabetic() => tokens.push(self.ident(self.byte_pos - 1)),
+                '_' => match self.peek() {
+                    Some(c) if c.is_alphanumeric() => tokens.push(self.ident(self.byte_pos - 1)),
+                    _ => tokens.push(Spanned {
+                        elem: Token::Placeholder,
+                        span: self.byte_pos - 1..self.byte_pos + 1,
+                        column: self.byte_pos - self.last_newline - 2,
+                    }),
+                },
                 '"' => tokens.push(self.string(self.byte_pos)?),
                 '(' => match self.peek() {
                     Some(')') => {

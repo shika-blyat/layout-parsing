@@ -79,6 +79,7 @@ pub enum UnOp {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Literal<'a> {
+    Str(&'a str),
     Num(&'a str),
     Bool(bool),
     #[allow(unused)]

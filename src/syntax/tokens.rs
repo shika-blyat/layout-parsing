@@ -39,6 +39,8 @@ pub enum Token<'a> {
 
     Unit,
 
+    Placeholder,
+
     If,
 
     Then,
