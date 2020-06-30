@@ -53,7 +53,7 @@ where
             })
     }
 
-    pub fn function_decl(&mut self, ctx: usize) -> SpannedResult<'a, FunctionDecl<'a>> {
+    fn function_decl(&mut self, ctx: usize) -> SpannedResult<'a, FunctionDecl<'a>> {
         let name = self.ident_string()?;
         let arguments = std::iter::from_fn(|| self.pattern().ok()).collect();
         self.equal()?;
@@ -361,8 +361,7 @@ where
     }
 
     fn next(&mut self) -> Option<SpannedTok<'a>> {
-        let v = self.tokens.next();
-        v
+        self.tokens.next()
     }
 
     pub(super) fn peek(&mut self) -> Option<&SpannedTok<'a>> {
