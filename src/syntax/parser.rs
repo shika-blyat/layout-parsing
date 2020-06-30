@@ -39,10 +39,12 @@ where
             tokens: tokens.peekable(),
         }
     }
+
     pub fn module(&mut self) -> Result<Module<'a>, ErrorInfo<'a>> {
         let items = std::iter::from_fn(|| self.item(0).ok()).collect();
         Ok(Module { items })
     }
+
     fn item(&mut self, ctx: usize) -> SpannedResult<'a, Item<'a>> {
         self.function_decl(ctx)
             .map(|Spanned { elem, span, column }| Spanned {
@@ -51,6 +53,7 @@ where
                 elem: Item::Function(elem),
             })
     }
+
     pub fn function_decl(&mut self, ctx: usize) -> SpannedResult<'a, FunctionDecl<'a>> {
         let name = self.ident_string()?;
         let arguments = std::iter::from_fn(|| self.pattern().ok()).collect();
@@ -66,6 +69,7 @@ where
             },
         })
     }
+
     fn pattern(&mut self) -> SpannedResult<'a, Pattern<'a>> {
         self.ident_string()
             .map(|Spanned { elem, span, column }| Spanned {
@@ -74,6 +78,7 @@ where
                 column,
             })
     }
+
     pub(super) fn block(&mut self, enclosing_ctx: usize) -> SpannedResult<'a, Expr<'a>> {
         let (start, block_ctx, first_statement) = self
             .statement()
@@ -231,9 +236,11 @@ where
             })
         }
     }
+
     fn argument(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.literal().or_else(|_| self.parenthesized())
     }
+
     fn parenthesized(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.lparen()?;
         let expr = self.expr()?;
@@ -278,6 +285,7 @@ where
             elem: Statement::Assignment(name, value),
         })
     }
+
     pub(super) fn literal(&mut self) -> SpannedResult<'a, Expr<'a>> {
         self.num()
             .or_else(|_| self.ident_token())
